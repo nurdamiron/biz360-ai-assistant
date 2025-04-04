@@ -7,6 +7,8 @@ const ProjectUnderstanding = require('../core/project-understanding');
 const logger = require('../utils/logger');
 const { pool } = require('../config/db.config');
 const TaskQueue = require('./task-queue');
+const taskLogger = require('../utils/task-logger');
+const websocket = require('../websocket');
 
 /**
  * Главный контроллер системы, координирующий работу всех компонентов
@@ -386,6 +388,186 @@ class Controller {
       throw error;
     }
   }
+
+
+  /**
+ * Обрабатывает следующую задачу из очереди
+ * @returns {Promise<void>}
+ */
+async processNextTask() {
+  if (!this.running) {
+    return;
+  }
+  
+  try {
+    // Получаем следующую задачу из очереди
+    const task = await this.taskQueue.getNextTask();
+    
+    if (!task) {
+      // Нет задач в очереди
+      return;
+    }
+    
+    logger.info(`Начало обработки задачи #${task.id}: ${task.type}`);
+    
+    // Добавляем запись в логи задачи
+    if (task.data.taskId) {
+      await taskLogger.logInfo(
+        task.data.taskId, 
+        `Начало обработки задачи в очереди: ${task.type}`
+      );
+    }
+    
+    // Отправляем уведомление подписчикам через WebSocket
+    const wsServer = websocket.getInstance();
+    if (wsServer) {
+      wsServer.notifySubscribers('task_queue', task.id, {
+        type: 'task_started',
+        task
+      });
+    }
+    
+    // Обрабатываем задачу в зависимости от её типа
+    switch (task.type) {
+      case 'decompose':
+        await this.decomposeTask(task.data.taskId);
+        break;
+      
+      case 'generate_code':
+        await this.generateCode(task.data.taskId);
+        break;
+      
+      case 'commit_code':
+        await this.commitCode(task.data.taskId, task.data.generationId);
+        break;
+      
+      case 'analyze_project':
+        await this.analyzeProject(task.data.projectId);
+        break;
+      
+      default:
+        logger.warn(`Неизвестный тип задачи: ${task.type}`);
+    }
+    
+    // Помечаем задачу как выполненную
+    await this.taskQueue.completeTask(task.id);
+    
+    // Добавляем запись в логи задачи
+    if (task.data.taskId) {
+      await taskLogger.logInfo(
+        task.data.taskId, 
+        `Задача в очереди успешно обработана: ${task.type}`
+      );
+    }
+    
+    // Отправляем уведомление подписчикам через WebSocket
+    if (wsServer) {
+      wsServer.notifySubscribers('task_queue', task.id, {
+        type: 'task_completed',
+        task
+      });
+    }
+    
+    logger.info(`Задача #${task.id} успешно обработана`);
+  } catch (error) {
+    logger.error('Ошибка при обработке задачи из очереди:', error);
+    
+    // Если есть ID задачи в очереди, помечаем её как неудачную
+    if (error.queueTaskId) {
+      await this.taskQueue.failTask(
+        error.queueTaskId, 
+        error.message || 'Неизвестная ошибка'
+      );
+      
+      // Добавляем запись в логи задачи
+      if (error.taskId) {
+        await taskLogger.logError(
+          error.taskId, 
+          `Ошибка при обработке задачи в очереди: ${error.message || 'Неизвестная ошибка'}`
+        );
+      }
+      
+      // Отправляем уведомление подписчикам через WebSocket
+      const wsServer = websocket.getInstance();
+      if (wsServer) {
+        wsServer.notifySubscribers('task_queue', error.queueTaskId, {
+          type: 'task_failed',
+          error: error.message || 'Неизвестная ошибка'
+        });
+      }
+    }
+  }
+}
+
+/**
+ * Декомпозирует высокоуровневую задачу на подзадачи (с дополнительным логированием и уведомлениями)
+ * @param {number} taskId - ID задачи
+ * @returns {Promise<Array>} - Список созданных подзадач
+ */
+async decomposeTask(taskId) {
+  try {
+    logger.info(`Декомпозиция задачи #${taskId}`);
+    await taskLogger.logInfo(taskId, 'Начало декомпозиции задачи');
+    await taskLogger.logProgress(taskId, 'Загрузка информации о задаче', 10);
+    
+    // Получаем информацию о задаче
+    const connection = await pool.getConnection();
+    
+    const [tasks] = await connection.query(
+      'SELECT * FROM tasks WHERE id = ?',
+      [taskId]
+    );
+    
+    connection.release();
+    
+    if (tasks.length === 0) {
+      throw new Error(`Задача с id=${taskId} не найдена`);
+    }
+    
+    const task = tasks[0];
+    
+    await taskLogger.logProgress(taskId, 'Инициализация планировщика задач', 20);
+    
+    // Инициализируем планировщик задач
+    const taskPlanner = new TaskPlanner(task.project_id);
+    
+    await taskLogger.logProgress(taskId, 'Декомпозиция задачи на подзадачи', 40);
+    
+    // Декомпозируем задачу
+    const subtasks = await taskPlanner.decomposeTask(taskId);
+    
+    await taskLogger.logProgress(taskId, `Создано ${subtasks.length} подзадач`, 80);
+    
+    // Отправляем уведомление подписчикам через WebSocket
+    const wsServer = websocket.getInstance();
+    if (wsServer) {
+      wsServer.notifySubscribers('task', taskId, {
+        type: 'subtasks_created',
+        subtasks,
+        count: subtasks.length
+      });
+    }
+    
+    // Добавляем в очередь задачу на генерацию кода для первой подзадачи
+    if (subtasks && subtasks.length > 0) {
+      await this.addTask('generate_code', { taskId }, 6);
+      await taskLogger.logInfo(taskId, 'Задача на генерацию кода добавлена в очередь');
+    }
+    
+    await taskLogger.logProgress(taskId, 'Декомпозиция задачи завершена', 100);
+    
+    return subtasks;
+  } catch (error) {
+    logger.error(`Ошибка при декомпозиции задачи #${taskId}:`, error);
+    await taskLogger.logError(taskId, 'Ошибка при декомпозиции задачи', error);
+    
+    // Добавляем информацию о задаче для обработки в catch-блоке processNextTask
+    error.taskId = taskId;
+    
+    throw error;
+  }
+}
+
 }
 
 module.exports = new Controller();

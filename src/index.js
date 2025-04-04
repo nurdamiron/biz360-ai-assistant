@@ -3,13 +3,22 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const http = require('http');
 const { pool } = require('./config/db.config');
+const { initializeDatabase } = require('./config/db.initialize');
 const logger = require('./utils/logger');
 const controller = require('./controller');
+const websocket = require('./websocket');
 
 // Инициализация приложения
 const app = express();
 const port = process.env.PORT || 3000;
+
+// Создаем HTTP-сервер (для Express и WebSocket)
+const server = http.createServer(app);
+
+// Подключаем WebSocket-сервер
+websocket.initialize(server);
 
 // Инициализируем пул соединений с БД и сохраняем его в app.locals
 app.locals.db = pool;
@@ -39,7 +48,8 @@ app.get('/api/status', async (req, res) => {
       status: 'ok',
       version: '0.1.0',
       controller: controller.running ? 'running' : 'stopped',
-      database: 'connected'
+      database: 'connected',
+      websocket: websocket.getInstance() ? 'running' : 'stopped'
     });
   } catch (error) {
     logger.error('Ошибка при проверке состояния системы:', error);
@@ -77,15 +87,29 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Внутренняя ошибка сервера' });
 });
 
-// Запуск сервера
-const server = app.listen(port, () => {
-  logger.info(`Сервер запущен на порту ${port}`);
-  
-  // Автоматически запускаем контроллер при старте сервера
-  controller.start().catch(error => {
-    logger.error('Ошибка при автоматическом запуске контроллера:', error);
-  });
-});
+// Инициализация базы данных и запуск сервера
+async function start() {
+  try {
+    // Инициализируем базу данных (создаем таблицы, если их нет)
+    await initializeDatabase();
+    
+    // Запускаем HTTP-сервер
+    server.listen(port, () => {
+      logger.info(`Сервер запущен на порту ${port}`);
+      
+      // Автоматически запускаем контроллер при старте сервера
+      controller.start().catch(error => {
+        logger.error('Ошибка при автоматическом запуске контроллера:', error);
+      });
+    });
+  } catch (error) {
+    logger.error('Ошибка при запуске сервера:', error);
+    process.exit(1);
+  }
+}
+
+// Запускаем сервер
+start();
 
 // Обработка сигналов завершения процесса
 process.on('SIGTERM', () => {
@@ -103,6 +127,9 @@ async function gracefulShutdown() {
   try {
     // Останавливаем контроллер
     await controller.stop();
+    
+    // Останавливаем WebSocket-сервер
+    await websocket.shutdown();
     
     // Закрываем HTTP-сервер
     server.close(() => {

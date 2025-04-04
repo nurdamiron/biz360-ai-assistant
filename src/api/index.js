@@ -1,3 +1,10 @@
+// Обновленный фрагмент src/api/index.js
+
+// Подключение дополнительного маршрута логов
+router.use('/logs', require('./routes/logs'));
+
+// Полная версия обновленного файла src/api/index.js:
+
 // src/api/index.js
 
 const express = require('express');
@@ -33,6 +40,7 @@ router.use('/tasks', require('./routes/tasks'));
 router.use('/ai-assistant', require('./routes/ai-assistant'));
 router.use('/monitoring', require('./routes/monitoring'));
 router.use('/auth', require('./routes/auth'));
+router.use('/logs', require('./routes/logs'));
 
 // Подготовка дополнительных маршрутов (будут реализованы позже)
 // router.use('/projects', require('./routes/projects'));
