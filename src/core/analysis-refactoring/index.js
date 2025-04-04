@@ -88,53 +88,123 @@ class AnalysisRefactoring {
   }
 
   /**
-   * Запускает Babel-трансформации, позволяющие делать AST-рефакторинг.
-   * Пример показывает, как можно разбивать слишком большие функции и т.д.
-   *
-   * @param {string} code
-   * @returns {Promise<{refactoredCode: string, astChanges: Array}>}
-   */
-  async runBabelRefactor(code) {
-    try {
-      // Парсим в AST
-      const ast = parser.parse(code, {
-        sourceType: 'module',
-        plugins: ['jsx', 'classProperties'] // Добавьте любые нужные плагины
-      });
+ * Запускает Babel-трансформации для AST-рефакторинга.
+ * Выполняет различные оптимизации кода на основе AST.
+ *
+ * @param {string} code - Исходный код
+ * @returns {Promise<{refactoredCode: string, astChanges: Array}>}
+ */
+async runBabelRefactor(code) {
+  try {
+    // Парсим в AST
+    const ast = parser.parse(code, {
+      sourceType: 'module',
+      plugins: ['jsx', 'typescript', 'classProperties']
+    });
 
-      const astChanges = [];
-      // Обходим AST
-      traverse(ast, {
-        // Пример упрощённого рефакторинга:
-        // Если найдём функцию > 100 строк, логируем предупреждение (либо делим на части - на ваше усмотрение).
-        FunctionDeclaration(path) {
-          const fnStart = path.node.loc.start.line;
-          const fnEnd = path.node.loc.end.line;
-          const fnLength = fnEnd - fnStart + 1;
+    const astChanges = [];
+    
+    // Обходим AST
+    traverse(ast, {
+      // Обнаружение слишком длинных функций
+      FunctionDeclaration(path) {
+        const fnStart = path.node.loc.start.line;
+        const fnEnd = path.node.loc.end.line;
+        const fnLength = fnEnd - fnStart + 1;
+        const fnName = path.node.id?.name || 'anonymous';
 
-          if (fnLength > 100) {
-            astChanges.push({
-              type: 'LargeFunction',
-              message: `Function at lines ${fnStart}-${fnEnd} is too long (${fnLength} lines). Consider refactoring.`
-            });
-            // Здесь можно применить автоматический рефакторинг (разделение на подфункции), но это уже гораздо сложнее
-          }
-        },
-      });
+        if (fnLength > 100) {
+          astChanges.push({
+            type: 'LargeFunction',
+            name: fnName,
+            location: { start: fnStart, end: fnEnd },
+            message: `Function ${fnName} is too long (${fnLength} lines). Consider breaking it down.`
+          });
+        }
+      },
+      
+      // Проверка использования переменных
+      VariableDeclarator(path) {
+        const varName = path.node.id.name;
+        const binding = path.scope.getBinding(varName);
+        
+        // Неиспользуемые переменные
+        if (binding && binding.referenced === false) {
+          astChanges.push({
+            type: 'UnusedVariable',
+            name: varName,
+            location: {
+              start: path.node.loc.start.line,
+              end: path.node.loc.end.line
+            },
+            message: `Variable ${varName} is declared but never used.`
+          });
+        }
+      },
+      
+      // Обнаружение глубокой вложенности if-условий
+      IfStatement(path) {
+        let currentPath = path;
+        let depth = 1;
+        let nestingChain = [];
+        
+        // Находим цепочку вложенных if-statements
+        while (currentPath.get('consequent').get('body')[0]?.isIfStatement()) {
+          const innerIfPath = currentPath.get('consequent').get('body')[0];
+          nestingChain.push(innerIfPath.node.loc.start.line);
+          currentPath = innerIfPath;
+          depth++;
+        }
+        
+        if (depth > 3) {
+          astChanges.push({
+            type: 'DeepNesting',
+            location: {
+              start: path.node.loc.start.line,
+              nested: nestingChain
+            },
+            message: `Deep nesting of conditionals (depth ${depth}). Consider refactoring.`
+          });
+        }
+      },
+      
+      // Идентификация жёстко закодированных значений (magic numbers)
+      NumericLiteral(path) {
+        // Игнорируем обычные числа: 0, 1, -1, 2, 100, и 1000
+        const ignoredValues = [0, 1, -1, 2, 100, 1000];
+        const value = path.node.value;
+        
+        if (!ignoredValues.includes(value) && 
+            !path.parent.type.includes('Object') && // Не в объектных литералах
+            !path.findParent(p => p.isVariableDeclarator())) { // Не в объявлениях переменных
+          
+          astChanges.push({
+            type: 'MagicNumber',
+            value: value,
+            location: {
+              start: path.node.loc.start.line,
+              column: path.node.loc.start.column
+            },
+            message: `Magic number ${value} found. Consider using a named constant.`
+          });
+        }
+      }
+    });
 
-      // Генерируем код обратно
-      const output = generate(ast, {
-        retainLines: false,
-        compact: false
-      });
+    // Генерируем код обратно
+    const output = generate(ast, {
+      retainLines: false,
+      compact: false,
+      comments: true
+    });
 
-      return { refactoredCode: output.code, astChanges };
-    } catch (error) {
-      logger.error('Ошибка при Babel-рефакторинге:', error);
-      // Если что-то пошло не так, возвращаем исходный код
-      return { refactoredCode: code, astChanges: [] };
-    }
+    return { refactoredCode: output.code, astChanges };
+  } catch (error) {
+    logger.error('Ошибка при Babel-рефакторинге:', error);
+    // Если что-то пошло не так, возвращаем исходный код
+    return { refactoredCode: code, astChanges: [] };
   }
+}
 }
 
 module.exports = AnalysisRefactoring;

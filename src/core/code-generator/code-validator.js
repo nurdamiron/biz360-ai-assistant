@@ -225,6 +225,105 @@ class CodeValidator {
     }
   }
 
+  // Дополнение к src/core/code-generator/code-validator.js
+
+/**
+ * Валидация JavaScript кода с помощью ESLint с автоматическим исправлением
+ * @param {string} code - Код для валидации
+ * @param {string} tempDir - Временная директория
+ * @returns {Promise<Object>} - Результат валидации с исправленным кодом
+ */
+async validateWithESLint(code, tempDir) {
+  try {
+    // Создаем временный файл с кодом
+    const tempFile = path.join(tempDir, 'code-to-validate.js');
+    await fs.writeFile(tempFile, code);
+    
+    // Создаем базовый конфиг ESLint
+    const eslintConfig = {
+      env: {
+        node: true,
+        es6: true
+      },
+      parserOptions: {
+        ecmaVersion: 2020
+      },
+      rules: {
+        "no-unused-vars": "warn",
+        "no-undef": "error"
+      }
+    };
+    
+    const configPath = path.join(tempDir, '.eslintrc.json');
+    await fs.writeFile(configPath, JSON.stringify(eslintConfig, null, 2));
+    
+    // Запускаем ESLint с опцией исправления
+    try {
+      const { stdout, stderr } = await execAsync(`npx eslint --no-eslintrc -c ${configPath} --fix ${tempFile}`);
+      
+      // Читаем исправленный файл
+      const fixedCode = await fs.readFile(tempFile, 'utf8');
+      
+      return { 
+        isValid: true,
+        outputCode: fixedCode,
+        messages: []
+      };
+    } catch (error) {
+      // ESLint вернул ошибки, но мог исправить некоторые проблемы
+      // Все равно читаем файл, который может содержать исправления
+      const fixedCode = await fs.readFile(tempFile, 'utf8');
+      
+      // Парсим сообщения об ошибках
+      const messages = this.parseESLintOutput(error.stdout || error.stderr);
+      
+      return {
+        isValid: false,
+        outputCode: fixedCode,
+        messages: messages,
+        error: error.stderr || error.stdout || 'Неизвестная ошибка ESLint'
+      };
+    }
+  } catch (error) {
+    logger.error('Ошибка при валидации с ESLint:', error);
+    return {
+      isValid: false,
+      outputCode: code, // Возвращаем исходный код
+      messages: [],
+      error: `Ошибка валидации: ${error.message}`
+    };
+  }
+}
+
+/**
+ * Парсит вывод ESLint для извлечения сообщений об ошибках
+ * @param {string} output - Вывод ESLint
+ * @returns {Array<Object>} - Структурированные сообщения
+ */
+parseESLintOutput(output) {
+  const messages = [];
+  const lines = output.split('\n');
+  
+  // Ищем строки с ошибками/предупреждениями
+  lines.forEach(line => {
+    // Пример паттерна: filename.js:10:5: 'variable' is not defined. [Error/no-undef]
+    const match = line.match(/\w+\.js:(\d+):(\d+):\s+(.*)\s+\[(\w+)\/(\w+)]/);
+    
+    if (match) {
+      messages.push({
+        line: parseInt(match[1], 10),
+        column: parseInt(match[2], 10),
+        message: match[3],
+        severity: match[4].toLowerCase(),
+        rule: match[5]
+      });
+    }
+  });
+  
+  return messages;
+}
+
+
   /**
    * Валидирует код в зависимости от языка
    * @param {string} code - Код для валидации

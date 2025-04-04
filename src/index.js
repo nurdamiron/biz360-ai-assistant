@@ -25,11 +25,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// Подключение маршрутов API
-app.use('/api/tasks', require('./api/routes/tasks'));
-// Здесь можно подключить другие маршруты
-// app.use('/api/projects', require('./api/routes/projects'));
-// app.use('/api/code', require('./api/routes/code'));
+// Подключение основного API-маршрутизатора
+app.use('/api', require('./api'));
 
 // Маршрут состояния системы
 app.get('/api/status', async (req, res) => {
