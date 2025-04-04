@@ -7,6 +7,7 @@ const logger = require('../../utils/logger');
 const { pool } = require('../../config/db.config');
 const path = require('path');
 const fileUtils = require('../../utils/file-utils');
+const AnalysisRefactoring = require('../analysis-refactoring');
 
 /**
  * Класс для генерации кода на основе задач
@@ -16,6 +17,7 @@ class CodeGenerator {
     this.projectId = projectId;
     this.promptBuilder = new PromptBuilder(projectId);
     this.codeValidator = new CodeValidator();
+    this.analysisRefactoring = new AnalysisRefactoring(); // добавили
     this.llmClient = getLLMClient();
   }
 
@@ -81,69 +83,103 @@ class CodeGenerator {
     try {
       logger.info(`Начинаем генерацию кода для задачи #${taskId}`);
       
-      // Получаем информацию о задаче
+      // 1. Получаем информацию о задаче
       const task = await this.getTaskInfo(taskId);
       
-      // Обновляем статус задачи
+      // 2. Обновляем статус задачи
       await this.updateTaskStatus(taskId, 'in_progress');
       
-      // Создаем промпт для генерации кода
+      // 3. Создаем промпт для генерации кода
       const prompt = await this.promptBuilder.createCodeGenerationPrompt(task);
       
-      // Отправляем промпт в LLM
+      // 4. Отправляем промпт в LLM
       logger.info(`Отправляем запрос к LLM для задачи #${taskId}`);
       const response = await this.llmClient.sendPrompt(prompt);
       
-      // Логируем взаимодействие с LLM
+      // 5. Логируем взаимодействие с LLM
       await this.logLLMInteraction(taskId, prompt, response);
       
-      // Извлекаем код из ответа LLM
+      // 6. Извлекаем код из ответа LLM
       const extractedCode = this.extractCodeFromResponse(response);
       
       if (!extractedCode.code) {
         throw new Error('Не удалось извлечь код из ответа LLM');
       }
       
-      // Валидируем код
-      const validationResult = await this.codeValidator.validate(extractedCode.code, extractedCode.language);
+      /**
+       * 7. Запускаем расширенный анализ и рефакторинг
+       *    - Пройдемся по коду ESLint'ом (через ваш CodeValidator, внутри AnalysisRefactoring),
+       *      - auto-fix (если возможно),
+       *    - AST-преобразования (если захотите расширять)
+       */
+      const analysisRefactoring = new AnalysisRefactoring();
+      const {
+        refactoredCode,
+        lintMessages,
+        astChanges
+      } = await analysisRefactoring.runFullAnalysis(extractedCode.code, {
+        useBabelRefactor: true
+      });
+  
+      // Заменяем код на результат рефакторинга
+      extractedCode.code = refactoredCode;
+  
+      // 8. Валидируем обновлённый код
+      const validationResult = await this.codeValidator.validate(
+        extractedCode.code,
+        extractedCode.language
+      );
       
       if (!validationResult.isValid) {
-        logger.warn(`Сгенерированный код не прошел валидацию: ${validationResult.error}`);
+        logger.warn(
+          `Сгенерированный (после рефакторинга) код не прошел валидацию: ${validationResult.error}`
+        );
         
-        // Если код не прошел валидацию, пробуем исправить его
-        const fixedCode = await this.fixInvalidCode(extractedCode.code, validationResult.error);
+        // Попробуем использовать метод исправления (если у вас уже есть fixInvalidCode)
+        const fixedCode = await this.fixInvalidCode(
+          extractedCode.code,
+          validationResult.error
+        );
         
-        // Снова валидируем исправленный код
-        const fixedValidationResult = await this.codeValidator.validate(fixedCode, extractedCode.language);
+        // Снова валидируем
+        const fixedValidationResult = await this.codeValidator.validate(
+          fixedCode,
+          extractedCode.language
+        );
         
         if (!fixedValidationResult.isValid) {
+          // Если всё равно невалидно — бросаем ошибку
           throw new Error(`Не удалось исправить сгенерированный код: ${fixedValidationResult.error}`);
         }
         
+        // Если удалось исправить, перезаписываем код
         extractedCode.code = fixedCode;
+        logger.info('Повторная валидация после автопочинки — ОК');
       }
       
-      // Определяем путь к файлу на основе ответа или названия задачи
+      // 9. Определяем путь к файлу (может зависеть от task или имени)
       const filePath = this.determineFilePath(task, extractedCode.fileName, extractedCode.language);
       
-      // Сохраняем сгенерированный код в БД
+      // 10. Сохраняем сгенерированный (и отрефакторенный) код в БД (или на диск)
       const generationId = await this.saveGeneratedCode(taskId, filePath, extractedCode.code);
       
-      // Возвращаем результат
+      // 11. Возвращаем результат
       return {
         taskId,
         generationId,
         filePath,
         code: extractedCode.code,
         language: extractedCode.language,
-        summary: extractedCode.summary
+        summary: extractedCode.summary,
+        // Дополнительно, можем вернуть информацию об AST-преобразованиях или ESLint-предупреждениях
+        lintMessages,
+        astChanges
       };
     } catch (error) {
       logger.error(`Ошибка при генерации кода для задачи #${taskId}:`, error);
       
       // Обновляем статус задачи на "failed"
       await this.updateTaskStatus(taskId, 'failed');
-      
       throw error;
     }
   }

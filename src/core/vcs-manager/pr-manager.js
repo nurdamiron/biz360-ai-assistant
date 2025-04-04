@@ -3,6 +3,7 @@
 const axios = require('axios');
 const logger = require('../../utils/logger');
 const config = require('../../config/app.config');
+const AnalysisRefactoring = require('../analysis-refactoring');
 
 /**
  * Класс для работы с Pull Request
