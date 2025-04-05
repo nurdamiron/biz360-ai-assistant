@@ -6,7 +6,6 @@ const taskLogger = require('../../utils/task-logger');
 const websocket = require('../../websocket');
 const TaskDecomposer = require('../../core/task-planner/decomposer');
 const { getLLMClient } = require('../../utils/llm-client');
-
 /**
  * Контроллер для взаимодействия с AI-компонентами в контексте задач
  */
@@ -217,6 +216,62 @@ const taskAIController = {
       // Сохраняем сгенерированный код в БД
       const codeGenerationId = await this._saveGeneratedCode(taskId, filePath, generatedCode, language);
       
+      try {
+        const [taskInfo] = await connection.query(
+          'SELECT git_branch, repository_path FROM tasks t JOIN projects p ON t.project_id = p.id WHERE t.id = ?',
+          [taskId]
+        );
+        
+        if (taskInfo.length > 0 && taskInfo[0].git_branch && taskInfo[0].repository_path) {
+          const gitClient = new GitClient(taskInfo[0].repository_path);
+          
+          // Переключаемся на ветку задачи
+          await gitClient.checkout(taskInfo[0].git_branch);
+          
+          // Создаем физический файл в репозитории
+          const fullPath = path.join(taskInfo[0].repository_path, filePath);
+          const dirPath = path.dirname(fullPath);
+          
+          // Создаем директорию, если она не существует
+          if (!fs.existsSync(dirPath)) {
+            fs.mkdirSync(dirPath, { recursive: true });
+          }
+          
+          // Записываем файл
+          fs.writeFileSync(fullPath, generatedCode);
+          
+          // Создаем коммит
+          await gitClient.createTaskCommit(
+            taskId, 
+            `Сгенерирован код для ${filePath}`, 
+            [filePath]
+          );
+          
+          await taskLogger.logInfo(
+            taskId, 
+            `Автоматически создан коммит со сгенерированным кодом для файла ${filePath}`
+          );
+          
+          // Отправляем уведомление через WebSockets
+          const wsServer = websocket.getInstance();
+          if (wsServer) {
+            wsServer.notifySubscribers('task', taskId, {
+              type: 'task_code_committed',
+              taskId,
+              filePath,
+              generationId: codeGenerationId,
+              message: `Автоматический коммит сгенерированного кода для ${filePath}`
+            });
+          }
+        }
+      } catch (gitError) {
+        logger.error(`Ошибка при создании Git-коммита для задачи #${taskId}:`, gitError);
+        // Логируем ошибку, но не прерываем выполнение
+        await taskLogger.logWarning(
+          taskId, 
+          `Не удалось создать Git-коммит для сгенерированного кода: ${gitError.message}`
+        );
+      }
       // Логируем успешную генерацию кода
       await taskLogger.logInfo(taskId, `Код успешно сгенерирован для файла: ${filePath}`);
       

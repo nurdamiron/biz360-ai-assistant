@@ -4,6 +4,7 @@ const { pool } = require('../../config/db.config');
 const logger = require('../../utils/logger');
 const taskLogger = require('../../utils/task-logger');
 const websocket = require('../../websocket');
+const notificationManager = require('../../utils/notification-manager');
 
 /**
  * Контроллер для базовых CRUD операций с задачами
@@ -225,6 +226,25 @@ const taskController = {
         await connection.commit();
         connection.release();
         
+        if (newTask.assigned_to) {
+          await notificationManager.sendNotification({
+            type: 'task_assigned',
+            userId: newTask.assigned_to,
+            title: 'Вам назначена новая задача',
+            message: `Вам назначена новая задача "${newTask.title}".`,
+            projectId: newTask.project_id,
+            taskId: newTask.id,
+            data: {
+              taskId: newTask.id,
+              taskTitle: newTask.title,
+              taskDescription: newTask.description,
+              taskPriority: newTask.priority,
+              taskDueDate: newTask.due_date,
+              createdBy: req.user.username
+            }
+          });
+        }
+        
         // Отправляем уведомление через WebSockets, если есть
         const wsServer = websocket.getInstance();
         if (wsServer) {
@@ -418,6 +438,86 @@ const taskController = {
         await connection.commit();
         connection.release();
         
+        // Отправляем уведомления, если изменились важные поля
+if (status !== undefined && status !== existingTask.status) {
+  // Если задача завершена
+  if (status === 'completed') {
+    // Отправляем уведомление о завершении задачи
+    await notificationManager.sendNotification({
+      type: 'task_completed',
+      userId: existingTask.assigned_to, // Отправляем исполнителю
+      title: 'Задача выполнена',
+      message: `Задача "${updatedTask.title}" была отмечена как выполненная.`,
+      projectId: updatedTask.project_id,
+      taskId: updatedTask.id,
+      data: {
+        taskId: updatedTask.id,
+        taskTitle: updatedTask.title,
+        completedBy: req.user.username
+      }
+    });
+  } 
+  // Если задача заблокирована
+  else if (status === 'blocked') {
+    // Отправляем уведомление о блокировке задачи
+    await notificationManager.sendNotification({
+      type: 'task_blocked',
+      userId: existingTask.assigned_to, // Отправляем исполнителю
+      title: 'Задача заблокирована',
+      message: `Задача "${updatedTask.title}" была заблокирована.`,
+      projectId: updatedTask.project_id,
+      taskId: updatedTask.id,
+      data: {
+        taskId: updatedTask.id,
+        taskTitle: updatedTask.title,
+        blockedBy: req.user.username
+      }
+    });
+  }
+}
+
+// Если сменился исполнитель
+if (assigned_to !== undefined && assigned_to !== existingTask.assigned_to) {
+  // Отправляем уведомление новому исполнителю
+  if (assigned_to) {
+    await notificationManager.sendNotification({
+      type: 'task_assigned',
+      userId: assigned_to,
+      title: 'Вам назначена задача',
+      message: `Вам назначена задача "${updatedTask.title}".`,
+      projectId: updatedTask.project_id,
+      taskId: updatedTask.id,
+      data: {
+        taskId: updatedTask.id,
+        taskTitle: updatedTask.title,
+        taskDescription: updatedTask.description,
+        taskPriority: updatedTask.priority,
+        taskDueDate: updatedTask.due_date,
+        assignedBy: req.user.username
+      }
+    });
+  }
+  
+  // Отправляем уведомление предыдущему исполнителю, если он был
+  if (existingTask.assigned_to) {
+    await notificationManager.sendNotification({
+      type: 'task_unassigned',
+      userId: existingTask.assigned_to,
+      title: 'Вы больше не назначены на задачу',
+      message: `Вы больше не назначены на задачу "${updatedTask.title}".`,
+      projectId: updatedTask.project_id,
+      taskId: updatedTask.id,
+      data: {
+        taskId: updatedTask.id,
+        taskTitle: updatedTask.title,
+        reassignedBy: req.user.username,
+        newAssignee: assigned_to ? updatedTask.assignee_name : 'Никто'
+      }
+    });
+  }
+}
+
+
         // Отправляем уведомление через WebSockets, если есть
         const wsServer = websocket.getInstance();
         if (wsServer) {

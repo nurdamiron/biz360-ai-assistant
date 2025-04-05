@@ -4,6 +4,7 @@ const { pool } = require('../../config/db.config');
 const logger = require('../../utils/logger');
 const taskLogger = require('../../utils/task-logger');
 const websocket = require('../../websocket');
+const GitClient = require('../../utils/git-client');
 
 /**
  * Контроллер для управления статусами задач
@@ -46,11 +47,12 @@ const taskStatusController = {
       }
       
       const oldStatus = tasks[0].status;
+      const task = tasks[0];
       
       // Если статус не изменился, просто возвращаем задачу
       if (oldStatus === status) {
         connection.release();
-        return res.json(tasks[0]);
+        return res.json(task);
       }
       
       await connection.beginTransaction();
@@ -80,6 +82,21 @@ const taskStatusController = {
           
           // Проверяем, все ли подзадачи выполнены
           await this._checkSubtasksCompletion(connection, taskId);
+          
+          // Интеграция с Git: Предлагаем создать Pull Request, если у задачи есть Git-ветка
+          if (task.git_branch) {
+            // Отправляем уведомление через WebSockets
+            const wsServer = websocket.getInstance();
+            if (wsServer) {
+              wsServer.notifySubscribers('task', taskId, {
+                type: 'task_completed_with_git',
+                taskId,
+                message: 'Задача выполнена. Создать Pull Request?',
+                suggestPR: true,
+                branchName: task.git_branch
+              });
+            }
+          }
         }
         
         // Получаем обновленную задачу

@@ -5,6 +5,7 @@ const logger = require('../../utils/logger');
 const taskLogger = require('../../utils/task-logger');
 const websocket = require('../../websocket');
 const { getLLMClient } = require('../../utils/llm-client');
+const notificationManager = require('../../utils/notification-manager');
 
 /**
  * Контроллер для AI-проверки кода
@@ -79,6 +80,77 @@ const codeReviewController = {
           taskId, 
           `Проверка кода завершена для файла: ${filePath}. Оценка: ${reviewResult.score}/10`
         );
+
+        // Отправляем уведомление о результатах проверки кода
+// Получаем информацию о задаче и исполнителе
+const taskConnection = await pool.getConnection();
+const [taskInfo] = await taskConnection.query(
+  'SELECT t.assigned_to, t.created_by, t.title, u.username FROM tasks t LEFT JOIN users u ON t.assigned_to = u.id WHERE t.id = ?',
+  [taskId]
+);
+taskConnection.release();
+
+if (taskInfo.length > 0) {
+    const task = taskInfo[0];
+    
+    // Создаем сообщение в зависимости от результата проверки
+    let title, message;
+    
+    if (reviewResult.score >= 8) {
+      title = 'Отличный результат проверки кода';
+      message = `Проверка кода для файла ${filePath} завершена с отличной оценкой: ${reviewResult.score}/10.`;
+    } else if (reviewResult.score >= 6) {
+      title = 'Хороший результат проверки кода';
+      message = `Проверка кода для файла ${filePath} завершена с хорошей оценкой: ${reviewResult.score}/10.`;
+    } else if (reviewResult.score >= 4) {
+      title = 'Результат проверки кода требует внимания';
+      message = `Проверка кода для файла ${filePath} завершена с оценкой ${reviewResult.score}/10. Рекомендуется внести исправления.`;
+    } else {
+      title = 'Низкий результат проверки кода';
+      message = `Проверка кода для файла ${filePath} завершена с низкой оценкой: ${reviewResult.score}/10. Необходимо внести исправления.`;
+    }
+    
+    // Отправляем уведомление исполнителю
+    if (task.assigned_to) {
+      await notificationManager.sendNotification({
+        type: 'code_review_completed',
+        userId: task.assigned_to,
+        title,
+        message,
+        taskId,
+        data: {
+          taskId,
+          taskTitle: task.title,
+          filePath,
+          score: reviewResult.score,
+          reviewId,
+          issues: reviewResult.issues.length,
+          generationId: generationId || null
+        }
+      });
+    }
+    
+    // Отправляем уведомление автору задачи, если он не является исполнителем
+    if (task.created_by && task.created_by !== task.assigned_to) {
+      await notificationManager.sendNotification({
+        type: 'code_review_completed',
+        userId: task.created_by,
+        title,
+        message,
+        taskId,
+        data: {
+          taskId,
+          taskTitle: task.title,
+          filePath,
+          score: reviewResult.score,
+          reviewId,
+          issues: reviewResult.issues.length,
+          generationId: generationId || null,
+          assignee: task.username
+        }
+      });
+    }
+  }
         
         // Если есть генерация кода, обновляем ее статус
         if (generationId) {
