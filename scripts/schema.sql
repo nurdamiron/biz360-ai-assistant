@@ -228,6 +228,18 @@ CREATE TABLE IF NOT EXISTS user_sessions (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+-- Добавить в scripts/schema.sql
+CREATE TABLE IF NOT EXISTS llm_token_usage (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  date DATE NOT NULL,
+  model VARCHAR(50) NOT NULL,
+  prompt_tokens INT DEFAULT 0,
+  completion_tokens INT DEFAULT 0,
+  total_tokens INT DEFAULT 0,
+  estimated_cost DECIMAL(10, 6) DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Создание индексов
 CREATE INDEX idx_api_keys_user_id ON api_keys(user_id);
 CREATE INDEX idx_api_key_logs_api_key_id ON api_key_logs(api_key_id);

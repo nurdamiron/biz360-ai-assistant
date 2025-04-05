@@ -2,7 +2,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { getEnhancedLLMClient } = require('../../utils/enhanced-llm-client');
+const { getLLMClient } = require('../../utils/llm-client');
 const tokenManager = require('../../utils/token-manager');
 const { pool } = require('../../config/db.config');
 const logger = require('../../utils/logger');
@@ -101,7 +101,7 @@ router.get('/database', async (req, res) => {
  */
 router.get('/llm', async (req, res) => {
   try {
-    const llmClient = getEnhancedLLMClient();
+    const llmClient = getLLMClient();
     
     // Получаем статистику производительности
     const performanceStats = llmClient.getPerformanceStats();
@@ -243,7 +243,7 @@ router.get('/logs', async (req, res) => {
  */
 router.post('/optimize-cache', async (req, res) => {
   try {
-    const llmClient = getEnhancedLLMClient();
+    const llmClient = getLLMClient();
     
     // Очищаем кэш LLM
     llmClient.clearCache();
@@ -321,7 +321,7 @@ async function checkDatabaseHealth() {
  */
 async function checkLLMHealth() {
   try {
-    const llmClient = getEnhancedLLMClient();
+    const llmClient = getLLMClient();
     
     // Проверяем наличие API ключа
     if (!llmClient.apiKey) {

@@ -1,8 +1,8 @@
 // src/middleware/auth.js
 
 const jwt = require('jsonwebtoken');
-const { pool } = require('../config/db.config');
-const logger = require('../utils/logger');
+const { pool } = require('../../config/db.config');
+const logger = require('../../utils/logger');
 
 /**
  * Middleware для аутентификации по JWT токену

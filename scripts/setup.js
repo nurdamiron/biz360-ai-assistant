@@ -222,7 +222,8 @@ async function setupDatabase() {
       host: dbHost,
       port: dbPort,
       user: dbUser,
-      password: dbPassword
+      password: dbPassword,
+      multipleStatements: false // Устанавливаем в false, чтобы использовать отдельные запросы
     });
 
     console.log('✅ Подключено к MySQL серверу');
@@ -241,11 +242,22 @@ async function setupDatabase() {
       const schemaPath = path.join(process.cwd(), 'scripts', 'schema.sql');
       const schemaSql = await fs.readFile(schemaPath, 'utf8');
 
-      // Выполняем запросы из скрипта
-      const queries = schemaSql.split(';').filter(query => query.trim().length > 0);
+      // Выполняем запросы из скрипта по одному
+      const queries = schemaSql
+        .split(';')
+        .filter(query => query.trim().length > 0)
+        .map(query => query.trim() + ';');
       
       for (const query of queries) {
-        await connection.execute(query);
+        try {
+          // Используем query вместо execute для DDL запросов
+          await connection.query(query);
+        } catch (queryError) {
+          console.warn(`⚠️ Ошибка при выполнении запроса: ${queryError.message}`);
+          console.warn('Запрос:', query.substring(0, 100) + '...');
+          // Продолжаем выполнение, даже если отдельный запрос не выполнился
+          // Например, если таблица уже существует
+        }
       }
 
       console.log('✅ Таблицы успешно созданы');
