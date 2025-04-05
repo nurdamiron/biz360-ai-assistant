@@ -72,7 +72,7 @@ DB_HOST=localhost
 DB_PORT=3306
 DB_USER=root
 DB_PASSWORD=your_password
-DB_NAME=biz360_assistant
+DB_NAME=biz360_ai_assistant
 
 # Настройки LLM API
 LLM_API_KEY=your_anthropic_api_key

@@ -10,6 +10,8 @@ const tasksRoutes = require('./routes/tasks');  // Маршруты задач
 const aiAssistantRoutes = require('./routes/ai-assistant');  // Маршруты AI-ассистента
 const monitoringRoutes = require('./routes/monitoring');  // Маршруты мониторинга
 const logsRoutes = require('./routes/logs');  // Маршруты логов
+const projectsRoutes = require('./routes/projects');
+
 
 // Открытые маршруты
 router.get('/status', (req, res) => {
@@ -41,6 +43,7 @@ router.use('/tasks', tasksRoutes);
 router.use('/ai-assistant', aiAssistantRoutes);
 router.use('/monitoring', monitoringRoutes);
 router.use('/logs', logsRoutes);
+router.use('/projects', projectsRoutes);
 
 // Обработчик для несуществующих маршрутов
 router.use('*', (req, res) => {

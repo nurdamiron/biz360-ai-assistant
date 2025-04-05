@@ -160,7 +160,7 @@ async function setupEnvironment() {
   const dbPort = await question('Порт MySQL (3306): ');
   const dbUser = await question('Имя пользователя MySQL: ');
   const dbPassword = await question('Пароль MySQL: ');
-  const dbName = await question('Имя базы данных (biz360_assistant): ');
+  const dbName = await question('Имя базы данных (biz360_ai_assistant): ');
   
   console.log('\n--- Настройки LLM API ---');
   const llmApiKey = await question('API ключ для LLM (Anthropic Claude): ');
@@ -179,7 +179,7 @@ DB_HOST=${dbHost || 'localhost'}
 DB_PORT=${dbPort || '3306'}
 DB_USER=${dbUser || 'root'}
 DB_PASSWORD=${dbPassword || ''}
-DB_NAME=${dbName || 'biz360_assistant'}
+DB_NAME=${dbName || 'biz360_ai_assistant'}
 
 # Настройки LLM API
 LLM_API_KEY=${llmApiKey || ''}
@@ -214,7 +214,7 @@ async function setupDatabase() {
   const dbPort = parseInt(process.env.DB_PORT || '3306', 10);
   const dbUser = process.env.DB_USER || 'root';
   const dbPassword = process.env.DB_PASSWORD || '';
-  const dbName = process.env.DB_NAME || 'biz360_assistant';
+  const dbName = process.env.DB_NAME || 'biz360_ai_assistant';
 
   try {
     // Создаем соединение без указания базы данных
@@ -506,7 +506,7 @@ async function createDemoProject() {
     const dbPort = parseInt(process.env.DB_PORT || '3306', 10);
     const dbUser = process.env.DB_USER || 'root';
     const dbPassword = process.env.DB_PASSWORD || '';
-    const dbName = process.env.DB_NAME || 'biz360_assistant';
+    const dbName = process.env.DB_NAME || 'biz360_ai_assistant';
 
     const connection = await mysql.createConnection({
       host: dbHost,
