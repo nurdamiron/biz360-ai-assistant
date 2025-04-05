@@ -4,6 +4,9 @@ const router = express.Router();
 const logger = require('../utils/logger');
 const { authenticateCombined } = require('./middleware/auth');
 
+// Импортируем маршруты аутентификации
+// ВАЖНО: проверьте правильность пути до файла auth.js
+const authRoutes = require('./routes/auth');
 
 // Подключение открытых маршрутов (не требующих аутентификации)
 router.get('/status', (req, res) => {
@@ -25,16 +28,14 @@ router.get('/monitoring/health', (req, res) => {
   });
 });
 
-// Подключаем маршруты аутентификации ДО middleware аутентификации
-// Это позволит пользователям входить в систему без аутентификации
-
-const authRoutes = require('./routes/auth');
+// КРИТИЧНО ВАЖНО: подключаем маршруты аутентификации ДО middleware аутентификации
+// Это позволит неавторизованным пользователям логиниться
 router.use('/auth', authRoutes);
 
-// Промежуточное ПО для защищенных маршрутов - всё после этой строки требует аутентификации
+// ПОСЛЕ этой строки все маршруты требуют аутентификации
 router.use(authenticateCombined);
 
-// Подключение защищенных маршрутов
+// Защищенные маршруты
 const tasksRouter = express.Router();
 router.use('/tasks', tasksRouter);
 
@@ -46,12 +47,6 @@ router.use('/monitoring', monitoringRouter);
 
 const logsRouter = express.Router();
 router.use('/logs', logsRouter);
-
-// Подготовка дополнительных маршрутов (будут реализованы позже)
-// const projectsRouter = express.Router();
-// router.use('/projects', projectsRouter);
-// const codeRouter = express.Router();
-// router.use('/code', codeRouter);
 
 // Обработчик для несуществующих маршрутов
 router.use('*', (req, res) => {
