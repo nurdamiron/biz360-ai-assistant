@@ -1,5 +1,8 @@
+// src/config/db.config.js
+
 const mysql = require('mysql2/promise');
 require('dotenv').config();
+const logger = require('../utils/logger');
 
 // Конфигурация подключения к MySQL
 const dbConfig = {
@@ -16,21 +19,50 @@ const dbConfig = {
 // Создание пула соединений
 const pool = mysql.createPool(dbConfig);
 
-// Функция для проверки соединения с базой данных
+/**
+ * Функция для проверки соединения с базой данных
+ * @returns {Promise<boolean>} Результат проверки
+ */
 const testConnection = async () => {
   try {
     const connection = await pool.getConnection();
-    console.log('Успешное подключение к базе данных MySQL');
+    logger.info('Успешное подключение к базе данных MySQL');
     connection.release();
     return true;
   } catch (error) {
-    console.error('Ошибка подключения к базе данных:', error.message);
+    logger.error('Ошибка подключения к базе данных:', error.message);
     return false;
   }
 };
 
-// Экспорт пула соединений и функции проверки
+/**
+ * Инициализирует соединение с базой данных и выполняет необходимые проверки
+ * @returns {Promise<void>}
+ */
+const initializeConnection = async () => {
+  try {
+    // Проверяем соединение с базой данных
+    const connected = await testConnection();
+    
+    if (!connected) {
+      logger.error('Не удалось подключиться к базе данных. Приложение будет остановлено.');
+      process.exit(1);
+    }
+    
+    // Инициализируем структуру базы данных
+    const { initializeDatabase } = require('./db.initialize');
+    await initializeDatabase();
+    
+    logger.info('База данных успешно инициализирована');
+  } catch (error) {
+    logger.error('Ошибка при инициализации базы данных:', error);
+    process.exit(1);
+  }
+};
+
+// Экспорт пула соединений и функций
 module.exports = {
   pool,
-  testConnection
+  testConnection,
+  initializeConnection
 };

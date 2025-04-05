@@ -11,6 +11,7 @@ const aiAssistantRoutes = require('./routes/ai-assistant');  // Маршруты
 const monitoringRoutes = require('./routes/monitoring');  // Маршруты мониторинга
 const logsRoutes = require('./routes/logs');  // Маршруты логов
 const projectsRoutes = require('./routes/projects');
+const projectSettingsRoutes = require('./routes/project-settings');  // Маршруты настроек проектов
 
 
 // Открытые маршруты
@@ -44,6 +45,7 @@ router.use('/ai-assistant', aiAssistantRoutes);
 router.use('/monitoring', monitoringRoutes);
 router.use('/logs', logsRoutes);
 router.use('/projects', projectsRoutes);
+router.use('/project-settings', projectSettingsRoutes);
 
 // Обработчик для несуществующих маршрутов
 router.use('*', (req, res) => {

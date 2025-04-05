@@ -6,6 +6,8 @@
  */
 
 const { pool } = require('./db.config');
+const fs = require('fs').promises;
+const path = require('path');
 const logger = require('../utils/logger');
 
 /**
@@ -30,6 +32,9 @@ async function initializeDatabase() {
     // Запускаем создание каждой таблицы, если она еще не существует
     await createUsersTable(connection, existingTables);
     await createProjectsTable(connection, existingTables);
+    await createProjectSettingsTable(connection, existingTables);
+    await createTagsTable(connection, existingTables);
+    await createProjectTagsTable(connection, existingTables);
     await createTasksTable(connection, existingTables);
     await createSubtasksTable(connection, existingTables);
     await createTaskQueueTable(connection, existingTables);
@@ -47,6 +52,10 @@ async function initializeDatabase() {
     await createSchemaTablesTable(connection, existingTables);
     await createSchemaColumnsTable(connection, existingTables);
     await createSchemaRelationsTable(connection, existingTables);
+    await createMigrationsTable(connection, existingTables);
+
+    // Проверяем наличие колонок в существующих таблицах и добавляем их, если необходимо
+    await updateExistingTables(connection);
     
     logger.info('Инициализация базы данных успешно завершена');
   } catch (error) {
@@ -97,7 +106,7 @@ async function createUsersTable(connection, existingTables) {
 }
 
 /**
- * Создает таблицу проектов
+ * Создает таблицу проектов с обновленной структурой
  * @param {Object} connection - Соединение с БД
  * @param {Array<string>} existingTables - Список существующих таблиц
  * @returns {Promise<void>}
@@ -112,15 +121,112 @@ async function createProjectsTable(connection, existingTables) {
         name VARCHAR(100) NOT NULL,
         description TEXT,
         repository_url VARCHAR(255) NOT NULL,
+        status ENUM('active', 'inactive', 'archived') DEFAULT 'active',
+        github_repo_connected BOOLEAN DEFAULT FALSE,
         last_analyzed TIMESTAMP NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         created_by INT,
-        FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+        FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+        INDEX (status)
       )
     `);
     
     logger.info('Таблица projects создана');
+  }
+}
+
+/**
+ * Создает таблицу настроек проекта
+ * @param {Object} connection - Соединение с БД
+ * @param {Array<string>} existingTables - Список существующих таблиц
+ * @returns {Promise<void>}
+ */
+async function createProjectSettingsTable(connection, existingTables) {
+  if (!existingTables.includes('project_settings')) {
+    logger.info('Создание таблицы project_settings...');
+    
+    await connection.query(`
+      CREATE TABLE project_settings (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        project_id INT NOT NULL,
+        setting_key VARCHAR(50) NOT NULL,
+        setting_value JSON,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY unique_project_setting (project_id, setting_key),
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+      )
+    `);
+    
+    logger.info('Таблица project_settings создана');
+  }
+}
+
+/**
+ * Создает таблицу тегов
+ * @param {Object} connection - Соединение с БД
+ * @param {Array<string>} existingTables - Список существующих таблиц
+ * @returns {Promise<void>}
+ */
+async function createTagsTable(connection, existingTables) {
+  if (!existingTables.includes('tags')) {
+    logger.info('Создание таблицы tags...');
+    
+    await connection.query(`
+      CREATE TABLE tags (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        name VARCHAR(50) NOT NULL,
+        description VARCHAR(255),
+        color VARCHAR(20) DEFAULT '#3498db',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY unique_tag_name (name)
+      )
+    `);
+    
+    // Добавляем стандартные теги
+    await connection.query(`
+      INSERT INTO tags (name, description, color) VALUES
+      ('backend', 'Backend development tasks', '#3498db'),
+      ('frontend', 'Frontend development tasks', '#2ecc71'),
+      ('bug', 'Bug fixes', '#e74c3c'),
+      ('feature', 'New features', '#9b59b6'),
+      ('enhancement', 'Enhancement of existing features', '#f1c40f'),
+      ('documentation', 'Documentation tasks', '#1abc9c'),
+      ('devops', 'DevOps related tasks', '#e67e22'),
+      ('security', 'Security related tasks', '#c0392b'),
+      ('testing', 'Testing related tasks', '#16a085'),
+      ('ui', 'User interface tasks', '#d35400')
+    `);
+    
+    logger.info('Таблица tags создана');
+  }
+}
+
+/**
+ * Создает таблицу тегов проекта
+ * @param {Object} connection - Соединение с БД
+ * @param {Array<string>} existingTables - Список существующих таблиц
+ * @returns {Promise<void>}
+ */
+async function createProjectTagsTable(connection, existingTables) {
+  if (!existingTables.includes('project_tags')) {
+    logger.info('Создание таблицы project_tags...');
+    
+    await connection.query(`
+      CREATE TABLE project_tags (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        project_id INT NOT NULL,
+        tag_name VARCHAR(50) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY unique_project_tag (project_id, tag_name),
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+        FOREIGN KEY (tag_name) REFERENCES tags(name) ON DELETE CASCADE
+      )
+    `);
+    
+    logger.info('Таблица project_tags создана');
   }
 }
 
@@ -606,6 +712,158 @@ async function createSchemaRelationsTable(connection, existingTables) {
     `);
     
     logger.info('Таблица schema_relations создана');
+  }
+}
+
+/**
+ * Создает таблицу для отслеживания применённых миграций
+ * @param {Object} connection - Соединение с БД
+ * @param {Array<string>} existingTables - Список существующих таблиц
+ * @returns {Promise<void>}
+ */
+async function createMigrationsTable(connection, existingTables) {
+  if (!existingTables.includes('schema_migrations')) {
+    logger.info('Создание таблицы schema_migrations...');
+    
+    await connection.query(`
+      CREATE TABLE schema_migrations (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        name VARCHAR(255) NOT NULL,
+        applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY unique_migration_name (name)
+      )
+    `);
+    
+    logger.info('Таблица schema_migrations создана');
+  }
+}
+
+/**
+ * Проверяет наличие и добавляет недостающие колонки в существующие таблицы
+ * @param {Object} connection - Соединение с БД
+ * @returns {Promise<void>}
+ */
+async function updateExistingTables(connection) {
+  try {
+    logger.info('Проверка и обновление существующих таблиц...');
+    
+    // Проверяем наличие колонки status в таблице projects
+    const [projectsColumns] = await connection.query(
+      "SELECT COLUMN_NAME FROM information_schema.columns WHERE table_schema = ? AND table_name = 'projects' AND COLUMN_NAME = 'status'",
+      [process.env.DB_NAME]
+    );
+    
+    if (projectsColumns.length === 0) {
+      logger.info('Добавление колонки status в таблицу projects...');
+      await connection.query(`
+        ALTER TABLE projects
+        ADD COLUMN status ENUM('active', 'inactive', 'archived') DEFAULT 'active' AFTER repository_url,
+        ADD INDEX (status)
+      `);
+      logger.info('Колонка status добавлена в таблицу projects');
+    }
+    
+    // Проверяем наличие колонки github_repo_connected в таблице projects
+    const [githubConnectedColumns] = await connection.query(
+      "SELECT COLUMN_NAME FROM information_schema.columns WHERE table_schema = ? AND table_name = 'projects' AND COLUMN_NAME = 'github_repo_connected'",
+      [process.env.DB_NAME]
+    );
+    
+    if (githubConnectedColumns.length === 0) {
+      logger.info('Добавление колонки github_repo_connected в таблицу projects...');
+      await connection.query(`
+        ALTER TABLE projects
+        ADD COLUMN github_repo_connected BOOLEAN DEFAULT FALSE AFTER status
+      `);
+      logger.info('Колонка github_repo_connected добавлена в таблицу projects');
+    }
+    
+    // Добавьте здесь проверки других таблиц и колонок по мере необходимости
+    
+    logger.info('Обновление существующих таблиц завершено');
+  } catch (error) {
+    logger.error('Ошибка при обновлении существующих таблиц:', error);
+    throw error;
+  }
+}
+
+// Инициализируем таблицы для проектных настроек и тегов в существующих проектах
+async function initializeSettingsAndTags(connection) {
+  try {
+    logger.info('Инициализация настроек и тегов для существующих проектов...');
+    
+    // Получаем список существующих проектов
+    const [projects] = await connection.query('SELECT id FROM projects');
+    
+    if (projects.length === 0) {
+      logger.info('Нет существующих проектов для инициализации настроек');
+      return;
+    }
+    
+    // Для каждого проекта добавляем настройки по умолчанию
+    for (const project of projects) {
+      const projectId = project.id;
+      
+      // Настройки анализа кода
+      await connection.query(
+        `INSERT IGNORE INTO project_settings (project_id, setting_key, setting_value) 
+         VALUES (?, ?, ?)`,
+        [projectId, 'code_analysis', JSON.stringify({
+          enabled: true,
+          auto_index: true,
+          exclude_patterns: ['node_modules', 'dist', '.git', 'build', 'coverage']
+        })]
+      );
+      
+      // Настройки интеграции с Git
+      await connection.query(
+        `INSERT IGNORE INTO project_settings (project_id, setting_key, setting_value) 
+         VALUES (?, ?, ?)`,
+        [projectId, 'git_integration', JSON.stringify({
+          auto_commit: false,
+          branch_prefix: 'ai-task-',
+          auto_pr: true
+        })]
+      );
+      
+      // Настройки AI-ассистента
+      await connection.query(
+        `INSERT IGNORE INTO project_settings (project_id, setting_key, setting_value) 
+         VALUES (?, ?, ?)`,
+        [projectId, 'ai_assistant', JSON.stringify({
+          code_generation_enabled: true,
+          code_review_enabled: true,
+          max_tokens_per_request: 8000
+        })]
+      );
+      
+      // Настройки уведомлений
+      await connection.query(
+        `INSERT IGNORE INTO project_settings (project_id, setting_key, setting_value) 
+         VALUES (?, ?, ?)`,
+        [projectId, 'notifications', JSON.stringify({
+          email_notifications: false,
+          slack_notifications: false,
+          slack_webhook: ''
+        })]
+      );
+      
+      // Настройки команды
+      await connection.query(
+        `INSERT IGNORE INTO project_settings (project_id, setting_key, setting_value) 
+         VALUES (?, ?, ?)`,
+        [projectId, 'team_settings', JSON.stringify({
+          default_assignee: '',
+          require_review: true,
+          team_members: []
+        })]
+      );
+    }
+    
+    logger.info(`Настройки по умолчанию добавлены для ${projects.length} проектов`);
+  } catch (error) {
+    logger.error('Ошибка при инициализации настроек и тегов:', error);
+    throw error;
   }
 }
 

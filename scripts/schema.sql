@@ -240,6 +240,37 @@ CREATE TABLE IF NOT EXISTS llm_token_usage (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Create project_settings table
+CREATE TABLE IF NOT EXISTS project_settings (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  project_id INT NOT NULL,
+  setting_key VARCHAR(50) NOT NULL,
+  setting_value JSON,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY unique_project_setting (project_id, setting_key),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+
+-- Add index for faster lookups
+CREATE INDEX idx_project_settings_project_id ON project_settings(project_id);
+
+-- Insert some default settings for existing projects
+INSERT INTO project_settings (project_id, setting_key, setting_value)
+SELECT id, 'code_analysis', '{"enabled": true, "auto_index": true, "exclude_patterns": ["node_modules", "dist", ".git"]}' 
+FROM projects
+ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value);
+
+INSERT INTO project_settings (project_id, setting_key, setting_value)
+SELECT id, 'git_integration', '{"auto_commit": false, "branch_prefix": "ai-task-", "auto_pr": true}'
+FROM projects
+ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value);
+
+INSERT INTO project_settings (project_id, setting_key, setting_value)
+SELECT id, 'ai_assistant', '{"code_generation_enabled": true, "code_review_enabled": true, "max_tokens_per_request": 8000}'
+FROM projects
+ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value);
+
 -- Создание индексов
 CREATE INDEX idx_api_keys_user_id ON api_keys(user_id);
 CREATE INDEX idx_api_key_logs_api_key_id ON api_key_logs(api_key_id);
