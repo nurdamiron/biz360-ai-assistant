@@ -3,11 +3,11 @@
 const express = require('express');
 const router = express.Router();
 const { authenticateCombined } = require('../middleware/auth');
-const projectController = require('../../controllers/project.controller');
-const projectFilesRoutes = require('./project-files.routes');
-const projectStatsRoutes = require('./project-stats.routes');
-const projectSettingsRoutes = require('./project-settings.routes');
-const projectTagsRoutes = require('./project-tags.routes');
+const projectController = require('../../controller/project.controller');
+const projectFilesRoutes = require('./project/project-files.routes');
+const projectStatsRoutes = require('./project/project-stats.routes');
+const projectSettingsRoutes = require('./project/project-settings.routes');
+const projectTagsRoutes = require('./project/project-tags.routes');
 
 // Базовые CRUD операции с проектами
 /**
