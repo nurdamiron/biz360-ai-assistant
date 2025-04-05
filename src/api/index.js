@@ -7,6 +7,7 @@ const { authenticateCombined } = require('./middleware/auth');
 // Импортируем маршруты
 const authRoutes = require('./routes/auth');  // Маршруты аутентификации
 const tasksRoutes = require('./routes/tasks');  // Маршруты задач
+const taskRoutes = require('./routes/task');  // Новые маршруты задач
 const aiAssistantRoutes = require('./routes/ai-assistant');  // Маршруты AI-ассистента
 const monitoringRoutes = require('./routes/monitoring');  // Маршруты мониторинга
 const logsRoutes = require('./routes/logs');  // Маршруты логов
