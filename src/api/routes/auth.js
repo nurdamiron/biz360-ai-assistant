@@ -7,7 +7,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { pool } = require('../../config/db.config');
 const logger = require('../../utils/logger');
-const { authenticateCombined, authorize } = require('../../middleware/auth');
+const { authenticateCombined, authorize } = require('../middleware/auth');
 
 /**
  * @route   POST /api/auth/login

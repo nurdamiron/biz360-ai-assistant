@@ -5,7 +5,7 @@ const router = express.Router();
 const { pool } = require('../../config/db.config');
 const taskLogger = require('../../utils/task-logger');
 const logger = require('../../utils/logger');
-const { authenticateCombined } = require('../../middleware/auth');
+const { authenticateCombined } = require('../middleware/auth');
 
 /**
  * @route   GET /api/logs/task/:taskId
