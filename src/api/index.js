@@ -12,6 +12,9 @@ const aiAssistantRoutes = require('./routes/ai-assistant');  // Маршруты
 const monitoringRoutes = require('./routes/monitoring');  // Маршруты мониторинга
 const logsRoutes = require('./routes/logs');  // Маршруты логов
 const projectsRoutes = require('./routes/projects');  // Маршруты проектов
+const timeEntriesRoutes = require('./routes/time-entries'); // Маршруты учета времени
+const commentsRoutes = require('./routes/comments'); // Маршруты комментариев
+const codeReviewRoutes = require('./routes/code-review'); // Маршруты проверки кода
 
 // Открытые маршруты
 router.get('/status', (req, res) => {
@@ -39,11 +42,15 @@ router.use('/auth', authRoutes);
 router.use(authenticateCombined);
 
 // Защищенные маршруты
-router.use('/tasks', tasksRoutes);
+router.use('/tasks', tasksRoutes);  // Старые маршруты задач
+router.use('/task', taskRoutes);  // Новые маршруты задач
 router.use('/ai-assistant', aiAssistantRoutes);
 router.use('/monitoring', monitoringRoutes);
 router.use('/logs', logsRoutes);
 router.use('/projects', projectsRoutes);
+router.use('/time-entries', timeEntriesRoutes);
+router.use('/comments', commentsRoutes);
+router.use('/code-review', codeReviewRoutes);
 
 // Обработчик для несуществующих маршрутов
 router.use('*', (req, res) => {

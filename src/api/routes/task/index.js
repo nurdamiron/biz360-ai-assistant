@@ -11,6 +11,7 @@ const taskTagsRoutes = require('./task-tags.routes');
 const taskAssignmentRoutes = require('./task-assignment.routes');
 const taskFilterRoutes = require('./task-filter.routes');
 const subtaskRoutes = require('./subtask.routes');
+const taskAIRoutes = require('./task-ai.routes'); // Новый маршрут для AI-интеграции
 
 // Базовые CRUD операции
 /**
@@ -47,5 +48,6 @@ router.use('/tags', taskTagsRoutes);
 router.use('/assignment', taskAssignmentRoutes);
 router.use('/filter', taskFilterRoutes);
 router.use('/:taskId/subtasks', subtaskRoutes);
+router.use('/ai', taskAIRoutes); // Подключаем маршруты для AI-интеграции
 
 module.exports = router;
