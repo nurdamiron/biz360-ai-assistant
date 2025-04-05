@@ -7,6 +7,8 @@ const { initializeDatabase } = require('./config/db.initialize');
 const logger = require('./utils/logger');
 const controller = require('./controller');
 const websocket = require('./websocket');
+const initializeMetrics = require('./core/metrics-init');
+const analyticsRoutes = require('./api/routes/analytics.routes');
 require('dotenv').config();
 
 

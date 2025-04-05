@@ -1,413 +1,480 @@
-// src/core/code-generator.js
+// src/core/code-generator/index.js
 
-const { pool } = require('../config/db.config');
-const logger = require('../utils/logger');
-const { getLLMClient } = require('../utils/llm-client');
-const codeValidator = require('../utils/code-validator');
-const taskLogger = require('../utils/task-logger');
+const { pool } = require('../../config/db.config');
+const logger = require('../../utils/logger');
+const BaseCodeGenerator = require('./base');
+const PromptGenerator = require('./prompt-generator');
+const FileAnalyzer = require('../project-understanding/file-analyzer');
+const taskLogger = require('../../utils/task-logger');
+const fs = require('fs');
+const path = require('path');
 
 /**
- * Класс для генерации кода с помощью LLM
+ * Класс для генерации кода для задач
  */
-class CodeGenerator {
+class CodeGenerator extends BaseCodeGenerator {
   /**
    * Конструктор класса
    * @param {number} projectId - ID проекта
    */
   constructor(projectId) {
-    this.projectId = projectId;
-    this.llmClient = getLLMClient();
-    this.codeValidator = codeValidator;
-    this.promptBuilder = new PromptBuilder();
-  }
-
-  /**
-   * Получает информацию о задаче
-   * @param {number} taskId - ID задачи
-   * @returns {Promise<Object>} - Информация о задаче
-   */
-  async getTaskInfo(taskId) {
-    try {
-      const connection = await pool.getConnection();
-      
-      const [tasks] = await connection.query(
-        'SELECT * FROM tasks WHERE id = ? AND project_id = ?',
-        [taskId, this.projectId]
-      );
-      
-      connection.release();
-      
-      if (tasks.length === 0) {
-        throw new Error(`Задача с id=${taskId} не найдена или не относится к указанному проекту`);
-      }
-      
-      return tasks[0];
-    } catch (error) {
-      logger.error('Ошибка при получении информации о задаче:', error);
-      throw error;
-    }
+    super(projectId);
+    this.promptGenerator = new PromptGenerator();
+    this.fileAnalyzer = new FileAnalyzer(projectId);
   }
 
   /**
    * Генерирует код для задачи
    * @param {number} taskId - ID задачи
-   * @param {string} filePath - Путь к файлу
-   * @param {string} [language] - Язык программирования (определяется автоматически, если не указан)
    * @returns {Promise<Object>} - Результат генерации
    */
-  async generateCode(taskId, filePath, language = null) {
+  async generateCode(taskId) {
     try {
+      logger.info(`Генерация кода для задачи #${taskId}`);
+      await taskLogger.logInfo(taskId, 'Начата генерация кода');
+      
       // Получаем информацию о задаче
       const task = await this.getTaskInfo(taskId);
       
-      // Получаем подзадачи
-      const [subtasks] = await (await pool.getConnection()).query(
+      // Получаем подзадачи, если есть
+      const connection = await pool.getConnection();
+      
+      const [subtasks] = await connection.query(
         'SELECT * FROM subtasks WHERE task_id = ? ORDER BY sequence_number',
         [taskId]
       );
       
-      // Получаем теги задачи
-      const [taskTags] = await (await pool.getConnection()).query(
-        'SELECT tag_name FROM task_tags WHERE task_id = ?',
-        [taskId]
-      );
+      connection.release();
       
-      const tags = taskTags.map(tag => tag.tag_name);
+      // Получаем информацию о проекте
+      const project = await this.getProjectInfo();
       
-      // Определяем язык по расширению файла, если не указан
-      const detectedLanguage = language || this._detectLanguageFromFilePath(filePath);
-      
-      // Логируем начало генерации кода
-      await taskLogger.logInfo(taskId, `Начата генерация кода для файла: ${filePath}`);
-      
-      // Создаем промпт для генерации кода
-      const prompt = await this.promptBuilder.createCodeGenerationPrompt(
-        task, 
-        subtasks, 
-        filePath, 
-        detectedLanguage, 
-        tags
-      );
-      
-      // Отправляем запрос к LLM
-      const response = await this.llmClient.sendPrompt(prompt);
-      
-      // Логируем взаимодействие с LLM
-      await this.logLLMInteraction(taskId, prompt, response);
-      
-      // Извлекаем код из ответа
-      const extractedCode = this.extractCodeFromResponse(response, detectedLanguage);
-      
-      if (!extractedCode.code) {
-        await taskLogger.logError(taskId, 'Не удалось извлечь код из ответа LLM');
-        throw new Error('Не удалось извлечь код из ответа LLM');
+      // Если нет подзадач, генерируем код напрямую для задачи
+      if (subtasks.length === 0) {
+        const result = await this.generateCodeForTask(task);
+        await taskLogger.logInfo(taskId, `Код успешно сгенерирован для задачи`);
+        return result;
       }
       
-      // Валидируем код
-      const validationResult = await this.codeValidator.validate(
-        extractedCode.code, 
-        extractedCode.language
-      );
+      // Генерируем код для каждой подзадачи
+      const results = [];
       
-      if (!validationResult.isValid) {
-        logger.warn(`Сгенерированный код не прошел валидацию: ${validationResult.error}`);
+      for (const subtask of subtasks) {
+        // Пропускаем уже выполненные подзадачи
+        if (subtask.status === 'completed') {
+          continue;
+        }
         
-        // Если код не прошел валидацию, пробуем исправить его
-        const fixedCode = await this.fixInvalidCode(
-          extractedCode.code, 
-          validationResult.error
-        );
+        const result = await this.generateCodeForSubtask(task, subtask);
         
-        extractedCode.code = fixedCode;
+        if (result && result.generationId) {
+          results.push(result);
+          await taskLogger.logInfo(taskId, `Код успешно сгенерирован для подзадачи #${subtask.id}: ${subtask.title}`);
+        } else {
+          await taskLogger.logWarning(taskId, `Не удалось сгенерировать код для подзадачи #${subtask.id}: ${subtask.title}`);
+        }
       }
       
-      // Сохраняем сгенерированный код
-      const generationId = await this.saveGeneratedCode(
-        taskId, 
-        filePath, 
-        extractedCode.code, 
-        extractedCode.language
-      );
+      if (results.length === 0) {
+        await taskLogger.logWarning(taskId, 'Не удалось сгенерировать код ни для одной подзадачи');
+        return null;
+      }
       
-      // Логируем успешную генерацию кода
-      await taskLogger.logInfo(taskId, `Код успешно сгенерирован для файла: ${filePath}`);
+      await taskLogger.logInfo(taskId, `Успешно сгенерирован код для ${results.length} подзадач`);
       
       return {
-        generationId,
+        success: true,
         taskId,
-        filePath,
-        code: extractedCode.code,
-        language: extractedCode.language,
-        summary: extractedCode.summary
+        generationCount: results.length,
+        generations: results
       };
     } catch (error) {
       logger.error(`Ошибка при генерации кода для задачи #${taskId}:`, error);
+      await taskLogger.logError(taskId, `Ошибка при генерации кода: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Извлекает код из ответа LLM
-   * @param {string} response - Ответ от LLM
-   * @param {string} language - Ожидаемый язык программирования
-   * @returns {Object} - Извлеченный код, язык и описание
+   * Генерирует код для конкретного файла
+   * @param {number} taskId - ID задачи
+   * @param {number} subtaskId - ID подзадачи (опционально)
+   * @param {string} filePath - Путь к файлу
+   * @param {string} description - Описание задачи/подзадачи
+   * @returns {Promise<Object>} - Результат генерации
    */
-  extractCodeFromResponse(response, language) {
+  async generateFile(taskId, subtaskId, filePath, description) {
     try {
-      // Определяем язык для поиска блока кода
-      const lang = language || '';
+      logger.info(`Генерация кода для файла ${filePath} (задача #${taskId}, подзадача #${subtaskId})`);
       
-      // Ищем блок кода в формате ```язык ... ```
-      const codeBlockRegex = new RegExp(`\`\`\`(?:${lang})?\\s*([\\s\\S]*?)\\s*\`\`\``, 'i');
-      const match = response.match(codeBlockRegex);
+      // Получаем информацию о задаче
+      const task = await this.getTaskInfo(taskId);
       
-      if (match && match[1]) {
-        // Ищем описание решения после блока кода
-        const descriptionMatch = response.match(/Описание решения:([\s\S]*?)$/);
+      // Получаем информацию о подзадаче, если указана
+      let subtask = null;
+      if (subtaskId) {
+        subtask = await this.getSubtaskInfo(subtaskId);
+      }
+      
+      // Получаем информацию о проекте
+      const project = await this.getProjectInfo();
+      
+      // Определяем язык программирования по расширению файла
+      const language = this.detectLanguageFromFilePath(filePath);
+      
+      // Получаем теги задачи
+      const tags = await this.getTaskTags(taskId);
+      
+      // Получаем структуру файлов проекта
+      const projectFiles = await this.fileAnalyzer.getProjectStructure();
+      
+      // Находим релевантные файлы для данной задачи
+      const relevantFiles = await this.fileAnalyzer.findRelevantFiles(
+        taskId, 
+        subtask ? subtask.description : task.description
+      );
+      
+      // Проверяем существование файла в проекте
+      const existingFileContent = await this.getFileContent(filePath);
+      
+      let generatedContent;
+      let prompt;
+      
+      if (existingFileContent) {
+        // Если файл существует, генерируем модификацию
+        prompt = await this.promptGenerator.createFileModificationPrompt(
+          task,
+          subtask,
+          filePath,
+          existingFileContent,
+          language,
+          description
+        );
         
+        // Отправляем запрос к LLM
+        const response = await this.llmClient.sendPrompt(prompt);
+        
+        // Извлекаем код из ответа
+        generatedContent = this.extractCodeFromResponse(response, language);
+      } else {
+        // Если файл не существует, генерируем новый
+        prompt = await this.promptGenerator.createFileGenerationPrompt(
+          task,
+          subtask,
+          filePath,
+          language,
+          tags,
+          projectFiles,
+          relevantFiles
+        );
+        
+        // Отправляем запрос к LLM
+        const response = await this.llmClient.sendPrompt(prompt);
+        
+        // Извлекаем код из ответа
+        generatedContent = this.extractCodeFromResponse(response, language);
+      }
+      
+      if (!generatedContent) {
+        logger.warn(`Не удалось сгенерировать код для файла ${filePath}`);
+        return null;
+      }
+      
+      // Сохраняем сгенерированный код в БД
+      const result = await this.saveGeneratedCode(
+        taskId, 
+        filePath, 
+        language, 
+        generatedContent
+      );
+      
+      // Связываем генерацию с подзадачей, если она указана
+      if (subtaskId && result.generationId) {
+        const connection = await pool.getConnection();
+        
+        await connection.query(
+          'UPDATE code_generations SET subtask_id = ? WHERE id = ?',
+          [subtaskId, result.generationId]
+        );
+        
+        connection.release();
+      }
+      
+      // Пытаемся физически создать файл, если указан путь к репозиторию
+      if (project.repository_path) {
+        try {
+          const fullPath = path.join(project.repository_path, filePath);
+          const dirPath = path.dirname(fullPath);
+          
+          // Создаем директорию, если её нет
+          if (!fs.existsSync(dirPath)) {
+            fs.mkdirSync(dirPath, { recursive: true });
+          }
+          
+          // Записываем файл
+          fs.writeFileSync(fullPath, generatedContent);
+          
+          logger.info(`Файл ${filePath} успешно создан физически`);
+        } catch (fsError) {
+          logger.warn(`Не удалось физически создать файл ${filePath}:`, fsError);
+        }
+      }
+      
+      return {
+        ...result,
+        taskId,
+        subtaskId,
+        filePath,
+        language
+      };
+    } catch (error) {
+      logger.error(`Ошибка при генерации кода для файла ${filePath}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Генерирует код для задачи без подзадач
+   * @param {Object} task - Информация о задаче
+   * @returns {Promise<Object>} - Результат генерации
+   * @private
+   */
+  async generateCodeForTask(task) {
+    try {
+      // Определяем тип файла на основе названия и описания задачи
+      const filePathInfo = this.inferFilePath(task.title, task.description);
+      
+      if (!filePathInfo) {
+        logger.warn(`Не удалось определить путь к файлу для задачи #${task.id}`);
+        return null;
+      }
+      
+      // Генерируем код для файла
+      const result = await this.generateFile(
+        task.id,
+        null,
+        filePathInfo.path,
+        task.description
+      );
+      
+      return {
+        success: !!result,
+        taskId: task.id,
+        generationId: result ? result.generationId : null,
+        filePath: filePathInfo.path
+      };
+    } catch (error) {
+      logger.error(`Ошибка при генерации кода для задачи #${task.id}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Генерирует код для подзадачи
+   * @param {Object} task - Информация о задаче
+   * @param {Object} subtask - Информация о подзадаче
+   * @returns {Promise<Object>} - Результат генерации
+   * @private
+   */
+  async generateCodeForSubtask(task, subtask) {
+    try {
+      // Определяем путь к файлу на основе подзадачи
+      // В первую очередь ищем явное указание в названии или описании
+      const filePathMatch = subtask.description.match(/файл:\s*([^\s]+)/i);
+      
+      let filePath;
+      
+      if (filePathMatch && filePathMatch[1]) {
+        filePath = filePathMatch[1];
+      } else {
+        // Если явно не указано, пытаемся определить автоматически
+        const filePathInfo = this.inferFilePath(subtask.title, subtask.description);
+        
+        if (!filePathInfo) {
+          logger.warn(`Не удалось определить путь к файлу для подзадачи #${subtask.id}`);
+          return null;
+        }
+        
+        filePath = filePathInfo.path;
+      }
+      
+      // Генерируем код для файла
+      const result = await this.generateFile(
+        task.id,
+        subtask.id,
+        filePath,
+        subtask.description
+      );
+      
+      return {
+        success: !!result,
+        taskId: task.id,
+        subtaskId: subtask.id,
+        generationId: result ? result.generationId : null,
+        filePath
+      };
+    } catch (error) {
+      logger.error(`Ошибка при генерации кода для подзадачи #${subtask.id}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Определяет путь к файлу на основе названия и описания
+   * @param {string} title - Название задачи/подзадачи
+   * @param {string} description - Описание задачи/подзадачи
+   * @returns {Object|null} - Информация о файле или null
+   * @private
+   */
+  inferFilePath(title, description) {
+    try {
+      // Проверяем на явное указание файла в описании
+      const filePathMatch = description.match(/файл:\s*([^\s]+)/i);
+      
+      if (filePathMatch && filePathMatch[1]) {
+        const filePath = filePathMatch[1];
         return {
-          code: match[1].trim(),
-          language: language || this._detectLanguageFromCode(match[1]),
-          summary: descriptionMatch ? descriptionMatch[1].trim() : null
+          path: filePath,
+          language: this.detectLanguageFromFilePath(filePath)
         };
       }
       
-      // Если блок кода не найден, возвращаем пустой объект
-      return {
-        code: null,
-        language: language,
-        summary: null
-      };
-    } catch (error) {
-      logger.error('Ошибка при извлечении кода из ответа:', error);
-      return {
-        code: null,
-        language: language,
-        summary: null
-      };
-    }
-  }
-
-  /**
-   * Исправляет невалидный код
-   * @param {string} code - Невалидный код
-   * @param {string} error - Сообщение об ошибке
-   * @returns {Promise<string>} - Исправленный код
-   */
-  async fixInvalidCode(code, error) {
-    try {
-      // Создаем промпт для исправления кода
-      const prompt = `
-# Исправление ошибок в коде
-
-## Код с ошибками
-\`\`\`
-${code}
-\`\`\`
-
-## Сообщение об ошибке
-\`\`\`
-${error}
-\`\`\`
-
-## Инструкции
-1. Исправь ошибки в коде, основываясь на сообщении об ошибке.
-2. Верни ТОЛЬКО исправленный код, без пояснений.
-3. Код должен быть рабочим и готовым к использованию.
-
-## Формат ответа
-\`\`\`
-// Исправленный код здесь
-\`\`\`
-`;
+      // Проверяем на наличие ключевых слов, указывающих на тип файла
+      const isComponent = /component|компонент/i.test(title) || /component|компонент/i.test(description);
+      const isController = /controller|контроллер/i.test(title) || /controller|контроллер/i.test(description);
+      const isModel = /model|модель/i.test(title) || /model|модель/i.test(description);
+      const isHelper = /helper|util|утилита/i.test(title) || /helper|util|утилита/i.test(description);
+      const isTest = /test|тест/i.test(title) || /test|тест/i.test(description);
       
-      // Отправляем запрос к LLM
-      const response = await this.llmClient.sendPrompt(prompt);
+      // Формируем название файла на основе названия задачи
+      let fileName = title
+        .toLowerCase()
+        .replace(/[^\w\s-]/g, '')  // Удаляем специальные символы
+        .replace(/\s+/g, '-')      // Заменяем пробелы на дефисы
+        .replace(/-+/g, '-');      // Убираем повторяющиеся дефисы
       
-      // Извлекаем код из ответа
-      const codeBlockRegex = /```(?:\w+)?\s*([\s\S]*?)\s*```/;
-      const match = response.match(codeBlockRegex);
+      // Определяем директорию и расширение на основе типа файла
+      let directory = 'src';
+      let extension = '.js';
       
-      if (match && match[1]) {
-        return match[1].trim();
+      if (isComponent) {
+        directory += '/components';
+        extension = '.jsx'; // Предполагаем React
+      } else if (isController) {
+        directory += '/controllers';
+      } else if (isModel) {
+        directory += '/models';
+      } else if (isHelper) {
+        directory += '/utils';
+      } else if (isTest) {
+        directory += '/tests';
+        extension = '.test.js';
       }
       
-      // Если блок кода не найден, возвращаем исходный код
-      return code;
+      return {
+        path: `${directory}/${fileName}${extension}`,
+        language: this.detectLanguageFromFilePath(extension)
+      };
     } catch (error) {
-      logger.error('Ошибка при исправлении кода:', error);
-      return code;
+      logger.error(`Ошибка при определении пути к файлу для "${title}":`, error);
+      return null;
     }
   }
 
   /**
-   * Сохраняет сгенерированный код в БД
-   * @param {number} taskId - ID задачи
-   * @param {string} filePath - Путь к файлу
-   * @param {string} code - Сгенерированный код
-   * @param {string} language - Язык программирования
-   * @returns {Promise<number>} - ID записи о генерации кода
+   * Применяет сгенерированный код
+   * @param {number} generationId - ID генерации кода
+   * @returns {Promise<boolean>} - Успешно ли применен код
    */
-  async saveGeneratedCode(taskId, filePath, code, language) {
-    const connection = await pool.getConnection();
-    
+  async applyGeneratedCode(generationId) {
     try {
-      // Сохраняем сгенерированный код
-      const [result] = await connection.query(
-        `INSERT INTO code_generations 
-         (task_id, file_path, language, generated_content, status, created_at) 
-         VALUES (?, ?, ?, ?, ?, NOW())`,
-        [taskId, filePath, language, code, 'pending_review']
-      );
+      logger.info(`Применение сгенерированного кода #${generationId}`);
       
-      return result.insertId;
-    } finally {
-      connection.release();
-    }
-  }
-
-  /**
-   * Логирует взаимодействие с LLM
-   * @param {number} taskId - ID задачи
-   * @param {string} prompt - Отправленный промпт
-   * @param {string} response - Полученный ответ
-   * @returns {Promise<void>}
-   */
-  async logLLMInteraction(taskId, prompt, response) {
-    try {
       const connection = await pool.getConnection();
       
-      await connection.query(
-        `INSERT INTO llm_interactions 
-         (task_id, model_used, prompt, response, tokens_used, created_at) 
-         VALUES (?, ?, ?, ?, ?, NOW())`,
-        [
-          taskId,
-          this.llmClient.modelName || 'unknown',
-          prompt,
-          response,
-          this.llmClient.getLastTokenCount() || 0
-        ]
+      // Получаем информацию о генерации
+      const [generations] = await connection.query(
+        'SELECT cg.*, t.project_id FROM code_generations cg JOIN tasks t ON cg.task_id = t.id WHERE cg.id = ?',
+        [generationId]
+      );
+      
+      if (generations.length === 0) {
+        connection.release();
+        logger.warn(`Генерация кода с id=${generationId} не найдена`);
+        return false;
+      }
+      
+      const generation = generations[0];
+      
+      // Проверяем статус генерации
+      if (generation.status !== 'approved') {
+        connection.release();
+        logger.warn(`Генерация кода #${generationId} не одобрена для применения`);
+        return false;
+      }
+      
+      // Получаем информацию о проекте
+      const [projects] = await connection.query(
+        'SELECT * FROM projects WHERE id = ?',
+        [generation.project_id]
       );
       
       connection.release();
+      
+      if (projects.length === 0) {
+        logger.warn(`Проект с id=${generation.project_id} не найден`);
+        return false;
+      }
+      
+      const project = projects[0];
+      
+      // Если указан путь к репозиторию, применяем код физически
+      if (project.repository_path) {
+        try {
+          const fullPath = path.join(project.repository_path, generation.file_path);
+          const dirPath = path.dirname(fullPath);
+          
+          // Создаем директорию, если её нет
+          if (!fs.existsSync(dirPath)) {
+            fs.mkdirSync(dirPath, { recursive: true });
+          }
+          
+          // Записываем файл
+          fs.writeFileSync(fullPath, generation.generated_content);
+          
+          logger.info(`Код успешно применен к файлу ${generation.file_path}`);
+          
+          // Обновляем статус генерации
+          await this.updateGenerationStatus(generationId, 'implemented');
+          
+          // Если связана с подзадачей, обновляем её статус
+          if (generation.subtask_id) {
+            const connection = await pool.getConnection();
+            
+            await connection.query(
+              "UPDATE subtasks SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE id = ?",
+              [generation.subtask_id]
+            );
+            
+            connection.release();
+            
+            logger.info(`Подзадача #${generation.subtask_id} отмечена как выполненная`);
+            await taskLogger.logInfo(generation.task_id, `Подзадача #${generation.subtask_id} автоматически отмечена как выполненная`);
+          }
+          
+          return true;
+        } catch (fsError) {
+          logger.error(`Ошибка при применении кода к файлу ${generation.file_path}:`, fsError);
+          return false;
+        }
+      }
+      
+      logger.warn(`Не указан путь к репозиторию для проекта #${generation.project_id}`);
+      return false;
     } catch (error) {
-      logger.error('Ошибка при логировании взаимодействия с LLM:', error);
+      logger.error(`Ошибка при применении сгенерированного кода #${generationId}:`, error);
+      return false;
     }
-  }
-
-  /**
-   * Определяет язык программирования по пути к файлу
-   * @param {string} filePath - Путь к файлу
-   * @returns {string} - Язык программирования
-   * @private
-   */
-  _detectLanguageFromFilePath(filePath) {
-    const extension = filePath.split('.').pop().toLowerCase();
-    
-    const extensionToLanguage = {
-      'js': 'javascript',
-      'ts': 'typescript',
-      'py': 'python',
-      'java': 'java',
-      'c': 'c',
-      'cpp': 'cpp',
-      'cs': 'csharp',
-      'go': 'go',
-      'rb': 'ruby',
-      'php': 'php',
-      'swift': 'swift',
-      'kt': 'kotlin',
-      'rs': 'rust',
-      'html': 'html',
-      'css': 'css',
-      'scss': 'scss',
-      'sql': 'sql',
-      'sh': 'bash'
-    };
-    
-    return extensionToLanguage[extension] || extension;
-  }
-
-  /**
-   * Определяет язык программирования по коду
-   * @param {string} code - Код
-   * @returns {string} - Язык программирования
-   * @private
-   */
-  _detectLanguageFromCode(code) {
-    // Простая эвристика для определения языка
-    if (code.includes('function') && (code.includes(';') || code.includes('{'))) {
-      return 'javascript';
-    } else if (code.includes('def ') && code.includes(':')) {
-      return 'python';
-    } else if (code.includes('public class') || code.includes('private class')) {
-      return 'java';
-    } else if (code.includes('#include')) {
-      return 'cpp';
-    } else {
-      return 'text';
-    }
-  }
-}
-
-/**
- * Класс для построения промптов
- */
-class PromptBuilder {
-  /**
-   * Создает промпт для генерации кода
-   * @param {Object} task - Задача
-   * @param {Array<Object>} subtasks - Подзадачи
-   * @param {string} filePath - Путь к файлу
-   * @param {string} language - Язык программирования
-   * @param {Array<string>} tags - Теги задачи
-   * @returns {Promise<string>} - Промпт для LLM
-   */
-  async createCodeGenerationPrompt(task, subtasks, filePath, language, tags) {
-    // Создаем базовый промпт
-    const prompt = `
-# Задача генерации кода
-
-## Контекст
-Ты - опытный разработчик, который пишет высококачественный код.
-
-## Файл
-Путь: ${filePath}
-Язык: ${language}
-
-## Задача
-Название: ${task.title}
-Описание: ${task.description}
-
-${subtasks.length > 0 ? `
-## Подзадачи
-${subtasks.map((subtask, index) => `${index + 1}. ${subtask.title}\n   ${subtask.description}`).join('\n\n')}
-` : ''}
-
-${tags.length > 0 ? `
-## Теги
-${tags.join(', ')}
-` : ''}
-
-## Инструкции
-1. Напиши код для файла ${filePath} на языке ${language}.
-2. Код должен быть полным, рабочим и готовым к использованию.
-3. Не пропускай важные детали.
-4. Включи только код без пояснений внутри кода.
-5. Используй лучшие практики для выбранного языка.
-6. Следуй стандартам форматирования, типичным для выбранного языка.
-
-## Формат ответа
-\`\`\`${language}
-// Твой код здесь
-\`\`\`
-
-## Описание решения
-После кода предоставь краткое описание, начинающееся с "Описание решения:", в котором объясни основные принципы и архитектурные решения.
-`;
-    
-    return prompt;
   }
 }
 
