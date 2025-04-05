@@ -4,11 +4,14 @@ const router = express.Router();
 const logger = require('../utils/logger');
 const { authenticateCombined } = require('./middleware/auth');
 
-// Импортируем маршруты аутентификации
-// ВАЖНО: проверьте правильность пути до файла auth.js
-const authRoutes = require('./routes/auth');
+// Импортируем маршруты
+const authRoutes = require('./routes/auth');  // Маршруты аутентификации
+const tasksRoutes = require('./routes/tasks');  // Маршруты задач
+const aiAssistantRoutes = require('./routes/ai-assistant');  // Маршруты AI-ассистента
+const monitoringRoutes = require('./routes/monitoring');  // Маршруты мониторинга
+const logsRoutes = require('./routes/logs');  // Маршруты логов
 
-// Подключение открытых маршрутов (не требующих аутентификации)
+// Открытые маршруты
 router.get('/status', (req, res) => {
   res.json({
     status: 'API работает',
@@ -18,7 +21,6 @@ router.get('/status', (req, res) => {
   });
 });
 
-// Открытые маршруты мониторинга
 router.get('/monitoring/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -28,25 +30,17 @@ router.get('/monitoring/health', (req, res) => {
   });
 });
 
-// КРИТИЧНО ВАЖНО: подключаем маршруты аутентификации ДО middleware аутентификации
-// Это позволит неавторизованным пользователям логиниться
+// Подключаем маршруты аутентификации БЕЗ аутентификации
 router.use('/auth', authRoutes);
 
 // ПОСЛЕ этой строки все маршруты требуют аутентификации
 router.use(authenticateCombined);
 
 // Защищенные маршруты
-const tasksRouter = express.Router();
-router.use('/tasks', tasksRouter);
-
-const aiAssistantRouter = express.Router();
-router.use('/ai-assistant', aiAssistantRouter);
-
-const monitoringRouter = express.Router();
-router.use('/monitoring', monitoringRouter);
-
-const logsRouter = express.Router();
-router.use('/logs', logsRouter);
+router.use('/tasks', tasksRoutes);
+router.use('/ai-assistant', aiAssistantRoutes);
+router.use('/monitoring', monitoringRoutes);
+router.use('/logs', logsRoutes);
 
 // Обработчик для несуществующих маршрутов
 router.use('*', (req, res) => {

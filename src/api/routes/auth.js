@@ -14,53 +14,75 @@ const { authenticateCombined, authorize } = require('../middleware/auth');
  * @desc    Аутентификация пользователя и выдача JWT токена
  * @access  Public
  */
+
 router.post('/login', async (req, res) => {
   try {
     const { username, password } = req.body;
-    
+
+    // 1) Проверяем, что поля не пустые
     if (!username || !password) {
-      return res.status(400).json({ error: 'Необходимо указать имя пользователя и пароль' });
+      return res.status(400).json({
+        success: false,
+        message: 'Необходимо указать имя пользователя и пароль'
+      });
     }
-    
+    console.log('Incoming login request:', req.body); // Логируем входящие данные
+
+
+    // 2) Получаем соединение с БД
     const connection = await pool.getConnection();
-    
-    // Получаем информацию о пользователе
+
+    // 3) Ищем пользователя
     const [users] = await connection.query(
       'SELECT id, username, password, role, active FROM users WHERE username = ?',
       [username]
     );
-    
+
     connection.release();
-    
+
+    // 4) Проверяем, нашли ли мы пользователя
     if (users.length === 0) {
-      return res.status(401).json({ error: 'Неверное имя пользователя или пароль' });
+      return res.status(401).json({
+        success: false,
+        message: 'Неверное имя пользователя или пароль'
+      });
     }
-    
+
     const user = users[0];
-    
-    // Проверяем, активен ли пользователь
+
+    // 5) Проверяем, активен ли пользователь
     if (!user.active) {
-      return res.status(401).json({ error: 'Учетная запись деактивирована' });
+      return res.status(401).json({
+        success: false,
+        message: 'Учетная запись деактивирована'
+      });
     }
-    
-    // Проверяем пароль
+
+    // 6) Сравниваем пароль
     const isPasswordValid = await bcrypt.compare(password, user.password);
-    
     if (!isPasswordValid) {
-      return res.status(401).json({ error: 'Неверное имя пользователя или пароль' });
+      return res.status(401).json({
+        success: false,
+        message: 'Неверное имя пользователя или пароль'
+      });
     }
-    
-    // Создаем JWT токен
+
+    // 7) Если пароль верен, генерируем JWT-токен
     const token = jwt.sign(
-      { userId: user.id, username: user.username, role: user.role },
-      process.env.JWT_SECRET,
+      {
+        userId: user.id,
+        username: user.username,
+        role: user.role
+      },
+      process.env.JWT_SECRET || 'fallback_secret', // Добавьте fallback
       { expiresIn: '24h' }
     );
-    
-    // Логируем успешный вход
+
+    // 8) Логируем успех
     logger.info(`Пользователь ${username} успешно аутентифицирован`);
-    
-    res.json({
+
+    // 9) Возвращаем пользователю токен и информацию о нем
+    return res.json({
       success: true,
       token,
       user: {
@@ -69,11 +91,17 @@ router.post('/login', async (req, res) => {
         role: user.role
       }
     });
+
   } catch (error) {
     logger.error('Ошибка при аутентификации пользователя:', error);
-    res.status(500).json({ error: 'Ошибка сервера при аутентификации' });
+    return res.status(500).json({
+      success: false,
+      message: 'Ошибка сервера при аутентификации'
+    });
   }
 });
+
+
 
 /**
  * @route   GET /api/auth/me

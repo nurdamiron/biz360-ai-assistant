@@ -1,6 +1,4 @@
 // src/index.js
-
-require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
@@ -9,6 +7,8 @@ const { initializeDatabase } = require('./config/db.initialize');
 const logger = require('./utils/logger');
 const controller = require('./controller');
 const websocket = require('./websocket');
+require('dotenv').config();
+
 
 // Инициализация приложения
 const app = express();
@@ -24,7 +24,12 @@ websocket.initialize(server);
 app.locals.db = pool;
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: ['http://localhost:3000', 'http://localhost:3001'], // Ваш фронтенд URL
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
