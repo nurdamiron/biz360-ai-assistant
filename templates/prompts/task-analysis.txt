@@ -1,0 +1,17 @@
+// templates/prompts/task-analysis.txt
+As an AI assistant, analyze the following task and provide structured feedback.
+
+Task Title: {{taskTitle}}
+Task Description: {{taskDescription}}
+
+Please provide a detailed analysis with the following sections:
+
+1. Complexity: Rate the complexity from 1 (very simple) to 10 (extremely complex).
+
+2. Requirements: List all identified requirements that need to be implemented.
+
+3. Risks: Identify potential risks, dependencies, or unclear points in the requirements.
+
+4. Timeline: Estimate how long this task might take for an experienced developer.
+
+Format your analysis in a clean, structured way that would be easy to parse.

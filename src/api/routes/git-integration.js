@@ -2,42 +2,171 @@
 
 const express = require('express');
 const router = express.Router();
-const { authenticateCombined } = require('../middleware/auth');
+
+// Подключаем маршруты PR
+const prRoutes = require('./git-integration/pr.routes');
+
+// Импортируем существующие контроллеры
 const gitController = require('../../controller/git-integration/git-controller');
+const authMiddleware = require('../middleware/auth');
+const { validate } = require('../middleware/validation');
+
+// Регистрируем маршруты для PR
+router.use('/pr', prRoutes);
 
 /**
- * @route   POST /api/git/projects/:projectId/init
- * @desc    Инициализировать Git-репозиторий для проекта
- * @access  Private
+ * @route POST /api/git/clone
+ * @description Клонирует репозиторий
+ * @access Private
  */
-router.post('/projects/:projectId/init', authenticateCombined, gitController.initializeRepository);
+router.post(
+  '/clone',
+  authMiddleware,
+  validate({
+    body: {
+      repositoryUrl: { type: 'string', required: true },
+      branch: { type: 'string', optional: true },
+      destination: { type: 'string', optional: true }
+    }
+  }),
+  gitController.cloneRepository
+);
 
 /**
- * @route   POST /api/git/tasks/:taskId/branch
- * @desc    Создать ветку для задачи
- * @access  Private
+ * @route POST /api/git/pull
+ * @description Выполняет git pull
+ * @access Private
  */
-router.post('/tasks/:taskId/branch', authenticateCombined, gitController.createTaskBranch);
+router.post(
+  '/pull',
+  authMiddleware,
+  validate({
+    body: {
+      projectId: { type: 'string', required: true },
+      branch: { type: 'string', optional: true }
+    }
+  }),
+  gitController.pullRepository
+);
 
 /**
- * @route   POST /api/git/tasks/:taskId/commit
- * @desc    Создать коммит для задачи
- * @access  Private
+ * @route POST /api/git/branch
+ * @description Создает новую ветку
+ * @access Private
  */
-router.post('/tasks/:taskId/commit', authenticateCombined, gitController.commitTaskChanges);
+router.post(
+  '/branch',
+  authMiddleware,
+  validate({
+    body: {
+      projectId: { type: 'string', required: true },
+      name: { type: 'string', required: true },
+      baseBranch: { type: 'string', optional: true }
+    }
+  }),
+  gitController.createBranch
+);
 
 /**
- * @route   POST /api/git/tasks/:taskId/pr
- * @desc    Создать Pull Request для задачи
- * @access  Private
+ * @route GET /api/git/branches
+ * @description Получает список веток
+ * @access Private
  */
-router.post('/tasks/:taskId/pr', authenticateCombined, gitController.createPullRequest);
+router.get(
+  '/branches',
+  authMiddleware,
+  validate({
+    query: {
+      projectId: { type: 'string', required: true }
+    }
+  }),
+  gitController.getBranches
+);
 
 /**
- * @route   GET /api/git/tasks/:taskId/status
- * @desc    Получить Git-статус задачи
- * @access  Private
+ * @route POST /api/git/checkout
+ * @description Выполняет checkout ветки
+ * @access Private
  */
-router.get('/tasks/:taskId/status', authenticateCombined, gitController.getTaskGitStatus);
+router.post(
+  '/checkout',
+  authMiddleware,
+  validate({
+    body: {
+      projectId: { type: 'string', required: true },
+      branch: { type: 'string', required: true }
+    }
+  }),
+  gitController.checkoutBranch
+);
+
+/**
+ * @route POST /api/git/commit
+ * @description Создает коммит
+ * @access Private
+ */
+router.post(
+  '/commit',
+  authMiddleware,
+  validate({
+    body: {
+      projectId: { type: 'string', required: true },
+      message: { type: 'string', required: true },
+      files: { type: 'array', optional: true }
+    }
+  }),
+  gitController.createCommit
+);
+
+/**
+ * @route POST /api/git/push
+ * @description Выполняет git push
+ * @access Private
+ */
+router.post(
+  '/push',
+  authMiddleware,
+  validate({
+    body: {
+      projectId: { type: 'string', required: true },
+      branch: { type: 'string', optional: true }
+    }
+  }),
+  gitController.pushBranch
+);
+
+/**
+ * @route GET /api/git/status
+ * @description Получает статус репозитория
+ * @access Private
+ */
+router.get(
+  '/status',
+  authMiddleware,
+  validate({
+    query: {
+      projectId: { type: 'string', required: true }
+    }
+  }),
+  gitController.getStatus
+);
+
+/**
+ * @route GET /api/git/commits
+ * @description Получает историю коммитов
+ * @access Private
+ */
+router.get(
+  '/commits',
+  authMiddleware,
+  validate({
+    query: {
+      projectId: { type: 'string', required: true },
+      branch: { type: 'string', optional: true },
+      limit: { type: 'number', optional: true }
+    }
+  }),
+  gitController.getCommits
+);
 
 module.exports = router;

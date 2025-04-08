@@ -1,286 +1,271 @@
 // src/core/vcs-manager/pr-manager.js
 
-const axios = require('axios');
+const gitClient = require('./git-client');
 const logger = require('../../utils/logger');
+const prDescriptionGenerator = require('./pr-description-generator');
+const conflictChecker = require('./conflict-checker');
+const reviewChecklistGenerator = require('./review-checklist-generator');
 const config = require('../../config/app.config');
-const AnalysisRefactoring = require('../analysis-refactoring');
 
 /**
- * Класс для работы с Pull Request
+ * Менеджер для работы с Pull Request
  */
 class PRManager {
   /**
-   * Конструктор менеджера PR
-   * @param {string} repoOwner - Владелец репозитория
-   * @param {string} repoName - Имя репозитория
+   * Создает Pull Request
+   * 
+   * @param {Object} options - Опции для создания PR
+   * @param {String} options.baseBranch - Базовая ветка (куда мерджим)
+   * @param {String} options.headBranch - Текущая ветка (откуда мерджим)
+   * @param {String} options.title - Заголовок PR
+   * @param {String} options.body - Описание PR (опционально)
+   * @param {Boolean} options.draft - Черновик PR (опционально)
+   * @param {String} options.taskId - ID задачи (опционально)
+   * @param {String} options.taskTitle - Название задачи (опционально)
+   * @param {String} options.repositoryUrl - URL репозитория (опционально)
+   * @returns {Promise<Object>} Созданный PR
    */
-  constructor(repoOwner, repoName) {
-    this.repoOwner = repoOwner;
-    this.repoName = repoName;
-    this.token = config.git.token;
-    this.apiBaseUrl = 'https://api.github.com';
-  }
-
-  /**
-   * Создает новый Pull Request
-   * @param {string} title - Заголовок PR
-   * @param {string} body - Описание PR
-   * @param {string} head - Ветка с изменениями
-   * @param {string} base - Целевая ветка (обычно main или master)
-   * @returns {Promise<Object>} - Созданный Pull Request
-   */
-  async createPullRequest(title, body, head, base = 'main') {
+  async createPR(options) {
     try {
-      const response = await axios({
-        method: 'POST',
-        url: `${this.apiBaseUrl}/repos/${this.repoOwner}/${this.repoName}/pulls`,
-        headers: {
-          'Authorization': `token ${this.token}`,
-          'Accept': 'application/vnd.github.v3+json'
-        },
-        data: {
-          title,
-          body,
-          head,
-          base
-        }
+      logger.info(`Создание PR из ${options.headBranch} в ${options.baseBranch}`);
+      
+      // Проверяем наличие конфликтов перед созданием PR
+      const conflictResult = await conflictChecker.checkConflicts({
+        baseBranch: options.baseBranch,
+        headBranch: options.headBranch,
+        analyzeConflicts: false
       });
       
-      logger.info(`Создан Pull Request #${response.data.number}: ${title}`);
+      if (conflictResult.hasConflicts) {
+        logger.warn(`Обнаружены конфликты: ${conflictResult.message}`);
+        return {
+          success: false,
+          message: conflictResult.message,
+          conflicts: conflictResult.conflictFiles,
+          url: null
+        };
+      }
       
-      return response.data;
-    } catch (error) {
-      logger.error(`Ошибка при создании Pull Request:`, error.response?.data || error.message);
-      throw new Error(`Failed to create PR: ${error.response?.data?.message || error.message}`);
-    }
-  }
-
-  /**
-   * Получает информацию о Pull Request
-   * @param {number} prNumber - Номер PR
-   * @returns {Promise<Object>} - Информация о PR
-   */
-  async getPullRequest(prNumber) {
-    try {
-      const response = await axios({
-        method: 'GET',
-        url: `${this.apiBaseUrl}/repos/${this.repoOwner}/${this.repoName}/pulls/${prNumber}`,
-        headers: {
-          'Authorization': `token ${this.token}`,
-          'Accept': 'application/vnd.github.v3+json'
-        }
+      // Если не указано описание PR, генерируем его автоматически
+      let prBody = options.body;
+      if (!prBody) {
+        prBody = await prDescriptionGenerator.generateDescription({
+          baseBranch: options.baseBranch,
+          headBranch: options.headBranch,
+          repositoryUrl: options.repositoryUrl || config.github?.repositoryUrl,
+          taskId: options.taskId,
+          taskTitle: options.taskTitle,
+          includeChangeList: true
+        });
+      }
+      
+      // Создаем PR через API GitHub/GitLab
+      const pr = await gitClient.createPullRequest({
+        baseBranch: options.baseBranch,
+        headBranch: options.headBranch,
+        title: options.title,
+        body: prBody,
+        draft: options.draft || false
       });
       
-      return response.data;
+      logger.info(`PR успешно создан: ${pr.url}`);
+      
+      return {
+        success: true,
+        message: 'Pull Request успешно создан',
+        url: pr.url,
+        id: pr.id,
+        number: pr.number
+      };
     } catch (error) {
-      logger.error(`Ошибка при получении информации о PR #${prNumber}:`, error.response?.data || error.message);
-      throw new Error(`Failed to get PR: ${error.response?.data?.message || error.message}`);
+      logger.error('Ошибка при создании PR:', error);
+      throw new Error(`Не удалось создать Pull Request: ${error.message}`);
     }
   }
-
+  
   /**
-   * Получает комментарии к Pull Request
-   * @param {number} prNumber - Номер PR
-   * @returns {Promise<Array<Object>>} - Список комментариев
+   * Проверяет наличие конфликтов и анализирует их
+   * 
+   * @param {Object} options - Опции для проверки
+   * @param {String} options.baseBranch - Базовая ветка
+   * @param {String} options.headBranch - Текущая ветка
+   * @param {Boolean} options.analyzeConflicts - Нужно ли анализировать конфликты
+   * @returns {Promise<Object>} Результат проверки
    */
-  async getPullRequestComments(prNumber) {
+  async checkMergeConflicts(options) {
     try {
-      const response = await axios({
-        method: 'GET',
-        url: `${this.apiBaseUrl}/repos/${this.repoOwner}/${this.repoName}/pulls/${prNumber}/comments`,
-        headers: {
-          'Authorization': `token ${this.token}`,
-          'Accept': 'application/vnd.github.v3+json'
-        }
-      });
-      
-      return response.data;
+      return await conflictChecker.checkConflicts(options);
     } catch (error) {
-      logger.error(`Ошибка при получении комментариев к PR #${prNumber}:`, error.response?.data || error.message);
-      throw new Error(`Failed to get PR comments: ${error.response?.data?.message || error.message}`);
+      logger.error('Ошибка при проверке конфликтов:', error);
+      throw new Error(`Не удалось проверить наличие конфликтов: ${error.message}`);
     }
   }
-
+  
   /**
-   * Добавляет комментарий к Pull Request
-   * @param {number} prNumber - Номер PR
-   * @param {string} body - Текст комментария
-   * @returns {Promise<Object>} - Созданный комментарий
+   * Генерирует описание для PR
+   * 
+   * @param {Object} options - Опции для генерации
+   * @returns {Promise<String>} Сгенерированное описание
    */
-  async addPullRequestComment(prNumber, body) {
+  async generatePRDescription(options) {
     try {
-      const response = await axios({
-        method: 'POST',
-        url: `${this.apiBaseUrl}/repos/${this.repoOwner}/${this.repoName}/issues/${prNumber}/comments`,
-        headers: {
-          'Authorization': `token ${this.token}`,
-          'Accept': 'application/vnd.github.v3+json'
-        },
-        data: { body }
-      });
-      
-      logger.info(`Добавлен комментарий к PR #${prNumber}`);
-      
-      return response.data;
+      return await prDescriptionGenerator.generateDescription(options);
     } catch (error) {
-      logger.error(`Ошибка при добавлении комментария к PR #${prNumber}:`, error.response?.data || error.message);
-      throw new Error(`Failed to add comment: ${error.response?.data?.message || error.message}`);
+      logger.error('Ошибка при генерации описания PR:', error);
+      throw new Error(`Не удалось сгенерировать описание PR: ${error.message}`);
     }
   }
-
+  
   /**
-   * Обновляет Pull Request
-   * @param {number} prNumber - Номер PR
-   * @param {Object} data - Данные для обновления (title, body, state)
-   * @returns {Promise<Object>} - Обновленный PR
+   * Генерирует шаблон для PR
+   * 
+   * @param {Object} options - Опции для генерации
+   * @returns {Promise<String>} Шаблон для PR
    */
-  async updatePullRequest(prNumber, data) {
+  async generatePRTemplate(options) {
     try {
-      const response = await axios({
-        method: 'PATCH',
-        url: `${this.apiBaseUrl}/repos/${this.repoOwner}/${this.repoName}/pulls/${prNumber}`,
-        headers: {
-          'Authorization': `token ${this.token}`,
-          'Accept': 'application/vnd.github.v3+json'
-        },
-        data
-      });
-      
-      logger.info(`Обновлен Pull Request #${prNumber}`);
-      
-      return response.data;
+      return await prDescriptionGenerator.generateTemplate(options);
     } catch (error) {
-      logger.error(`Ошибка при обновлении PR #${prNumber}:`, error.response?.data || error.message);
-      throw new Error(`Failed to update PR: ${error.response?.data?.message || error.message}`);
+      logger.error('Ошибка при генерации шаблона PR:', error);
+      throw new Error(`Не удалось сгенерировать шаблон PR: ${error.message}`);
     }
   }
-
+  
   /**
-   * Закрывает Pull Request
-   * @param {number} prNumber - Номер PR
-   * @returns {Promise<Object>} - Закрытый PR
+   * Генерирует чеклист для код-ревью
+   * 
+   * @param {Object} options - Опции для генерации
+   * @returns {Promise<Object>} Сгенерированный чеклист
    */
-  async closePullRequest(prNumber) {
+  async generateReviewChecklist(options) {
     try {
-      return await this.updatePullRequest(prNumber, { state: 'closed' });
+      return await reviewChecklistGenerator.generateChecklist(options);
     } catch (error) {
-      logger.error(`Ошибка при закрытии PR #${prNumber}:`, error);
-      throw error;
+      logger.error('Ошибка при генерации чеклиста для код-ревью:', error);
+      throw new Error(`Не удалось сгенерировать чеклист: ${error.message}`);
     }
   }
-
+  
   /**
-   * Мерджит Pull Request
-   * @param {number} prNumber - Номер PR
-   * @param {string} commitMessage - Сообщение для коммита слияния
-   * @returns {Promise<Object>} - Результат мерджа
+   * Оценивает PR на основе чеклиста
+   * 
+   * @param {Object} options - Опции для оценки
+   * @returns {Promise<Object>} Результат оценки
    */
-  async mergePullRequest(prNumber, commitMessage) {
+  async evaluatePR(options) {
     try {
-      const response = await axios({
-        method: 'PUT',
-        url: `${this.apiBaseUrl}/repos/${this.repoOwner}/${this.repoName}/pulls/${prNumber}/merge`,
-        headers: {
-          'Authorization': `token ${this.token}`,
-          'Accept': 'application/vnd.github.v3+json'
-        },
-        data: {
-          commit_title: commitMessage,
-          merge_method: 'merge'
-        }
-      });
-      
-      logger.info(`Pull Request #${prNumber} успешно смерджен`);
-      
-      return response.data;
+      return await reviewChecklistGenerator.evaluatePR(options);
     } catch (error) {
-      logger.error(`Ошибка при мердже PR #${prNumber}:`, error.response?.data || error.message);
-      throw new Error(`Failed to merge PR: ${error.response?.data?.message || error.message}`);
+      logger.error('Ошибка при оценке PR:', error);
+      throw new Error(`Не удалось оценить PR: ${error.message}`);
     }
   }
-
+  
   /**
-   * Получает список Pull Request для репозитория
-   * @param {string} state - Статус PR (open, closed, all)
-   * @returns {Promise<Array<Object>>} - Список PR
+   * Получает информацию о PR
+   * 
+   * @param {Object} options - Опции для получения информации
+   * @param {String} options.prId - ID или номер PR
+   * @param {String} options.repositoryUrl - URL репозитория (опционально)
+   * @returns {Promise<Object>} Информация о PR
    */
-  async listPullRequests(state = 'open') {
+  async getPRInfo(options) {
     try {
-      const response = await axios({
-        method: 'GET',
-        url: `${this.apiBaseUrl}/repos/${this.repoOwner}/${this.repoName}/pulls`,
-        headers: {
-          'Authorization': `token ${this.token}`,
-          'Accept': 'application/vnd.github.v3+json'
-        },
-        params: { state }
-      });
+      logger.info(`Получение информации о PR ${options.prId}`);
       
-      return response.data;
+      const prInfo = await gitClient.getPullRequestInfo(options.prId);
+      
+      return {
+        success: true,
+        pr: prInfo
+      };
     } catch (error) {
-      logger.error(`Ошибка при получении списка PR:`, error.response?.data || error.message);
-      throw new Error(`Failed to list PRs: ${error.response?.data?.message || error.message}`);
+      logger.error('Ошибка при получении информации о PR:', error);
+      throw new Error(`Не удалось получить информацию о PR: ${error.message}`);
     }
   }
-
+  
   /**
-   * Проверяет, прошли ли все проверки для PR
-   * @param {number} prNumber - Номер PR
-   * @returns {Promise<boolean>} - Результат проверки
+   * Обновляет PR
+   * 
+   * @param {Object} options - Опции для обновления
+   * @param {String} options.prId - ID или номер PR
+   * @param {String} options.title - Новый заголовок PR (опционально)
+   * @param {String} options.body - Новое описание PR (опционально)
+   * @param {Boolean} options.state - Новое состояние PR (опционально: 'open', 'closed')
+   * @returns {Promise<Object>} Обновленный PR
    */
-  async checkPullRequestStatus(prNumber) {
+  async updatePR(options) {
     try {
-      // Получаем список проверок для PR
-      const pr = await this.getPullRequest(prNumber);
-      const sha = pr.head.sha;
+      logger.info(`Обновление PR ${options.prId}`);
       
-      const response = await axios({
-        method: 'GET',
-        url: `${this.apiBaseUrl}/repos/${this.repoOwner}/${this.repoName}/commits/${sha}/check-runs`,
-        headers: {
-          'Authorization': `token ${this.token}`,
-          'Accept': 'application/vnd.github.v3+json'
-        }
-      });
+      const updatedPR = await gitClient.updatePullRequest(options);
       
-      const checkRuns = response.data.check_runs;
-      
-      // Проверяем, все ли проверки успешны
-      const allPassed = checkRuns.every(check => check.conclusion === 'success');
-      
-      return allPassed;
+      return {
+        success: true,
+        message: 'Pull Request успешно обновлен',
+        pr: updatedPR
+      };
     } catch (error) {
-      logger.error(`Ошибка при проверке статуса PR #${prNumber}:`, error.response?.data || error.message);
-      return false;
+      logger.error('Ошибка при обновлении PR:', error);
+      throw new Error(`Не удалось обновить Pull Request: ${error.message}`);
     }
   }
-
+  
   /**
-   * Создает сообщение для PR на основе выполненной задачи
-   * @param {Object} task - Задача, для которой создается PR
-   * @param {Array<Object>} changedFiles - Список измененных файлов
-   * @returns {Object} - Заголовок и описание PR
+   * Добавляет комментарий к PR
+   * 
+   * @param {Object} options - Опции для добавления комментария
+   * @param {String} options.prId - ID или номер PR
+   * @param {String} options.comment - Текст комментария
+   * @returns {Promise<Object>} Результат добавления комментария
    */
-  createPullRequestMessage(task, changedFiles) {
-    const title = `[AI] ${task.title}`;
-    
-    let body = `## Описание\n${task.description}\n\n`;
-    
-    body += `## Изменения\n`;
-    
-    if (changedFiles && changedFiles.length > 0) {
-      body += `Изменены следующие файлы:\n\n`;
-      changedFiles.forEach(file => {
-        body += `- \`${file}\`\n`;
-      });
-    } else {
-      body += `Нет изменений в файлах.`;
+  async addPRComment(options) {
+    try {
+      logger.info(`Добавление комментария к PR ${options.prId}`);
+      
+      const result = await gitClient.addPullRequestComment(
+        options.prId, 
+        options.comment
+      );
+      
+      return {
+        success: true,
+        message: 'Комментарий успешно добавлен',
+        comment: result
+      };
+    } catch (error) {
+      logger.error('Ошибка при добавлении комментария к PR:', error);
+      throw new Error(`Не удалось добавить комментарий: ${error.message}`);
     }
-    
-    body += `\n\n---\nЭтот PR был автоматически создан ИИ-ассистентом для задачи #${task.id}`;
-    
-    return { title, body };
+  }
+  
+  /**
+   * Мерджит PR
+   * 
+   * @param {Object} options - Опции для мерджа
+   * @param {String} options.prId - ID или номер PR
+   * @param {String} options.mergeMethod - Метод мерджа (опционально: 'merge', 'squash', 'rebase')
+   * @param {String} options.commitTitle - Заголовок коммита (опционально)
+   * @param {String} options.commitMessage - Сообщение коммита (опционально)
+   * @returns {Promise<Object>} Результат мерджа
+   */
+  async mergePR(options) {
+    try {
+      logger.info(`Мердж PR ${options.prId}`);
+      
+      const result = await gitClient.mergePullRequest(options);
+      
+      return {
+        success: true,
+        message: 'Pull Request успешно смерджен',
+        result
+      };
+    } catch (error) {
+      logger.error('Ошибка при мердже PR:', error);
+      throw new Error(`Не удалось смерджить Pull Request: ${error.message}`);
+    }
   }
 }
 
-module.exports = PRManager;
+module.exports = new PRManager();

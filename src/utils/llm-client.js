@@ -6,31 +6,47 @@ const NodeCache = require('node-cache');
 const config = require('../config/llm.config');
 const logger = require('./logger');
 const tokenManager = require('./token-manager');
+const promptManager = require('./prompt-manager');
+const llmCache = require('./llm-cache');
+const { pool } = require('../config/db.config');
 
 /**
  * Улучшенный клиент для взаимодействия с LLM API
- * Интегрирован с системой учета токенов и имеет дополнительные оптимизации
+ * Интегрирован с системой учета токенов, шаблонами и улучшенным кэшированием
  */
 class LLMClient {
-  constructor() {
-    this.apiKey = config.apiKey;
-    this.model = config.model;
-    this.apiUrl = config.apiUrl;
-    this.maxTokens = config.maxTokens;
-    this.temperature = config.temperature;
+  /**
+   * Создает экземпляр LLM клиента
+   * @param {Object} customConfig - Пользовательские настройки для переопределения конфигурации
+   */
+  constructor(customConfig = {}) {
+    // Объединяем настройки по умолчанию с пользовательскими
+    this.config = { ...config, ...customConfig };
+    
+    this.apiKey = this.config.apiKey;
+    this.model = this.config.model;
+    this.apiUrl = this.config.apiUrl;
+    this.maxTokens = this.config.maxTokens;
+    this.temperature = this.config.temperature;
+    
+    // Настройки провайдера LLM (по умолчанию anthropic)
+    this.provider = this.config.provider || 'anthropic';
     
     // Настройки повторных попыток при ошибках
-    this.maxRetries = config.maxRetries || 3;
-    this.retryDelay = config.retryDelay || 1000; // 1 секунда
+    this.maxRetries = this.config.maxRetries || 3;
+    this.retryDelay = this.config.retryDelay || 1000; // 1 секунда
     
-    // Инициализация кэша
+    // Инициализация локального кэша для совместимости
     this.cache = new NodeCache({ 
-      stdTTL: config.cacheTTL || 1800, 
+      stdTTL: this.config.cacheTTL || 1800, 
       checkperiod: 300 
     });
     
-    // Активирован ли кэш
-    this.cacheEnabled = config.cacheEnabled !== false;
+    // Активирован ли встроенный кэш (для совместимости)
+    this.cacheEnabled = this.config.cacheEnabled !== false;
+    
+    // Активировано ли улучшенное кэширование через llm-cache
+    this.enhancedCacheEnabled = this.config.enhancedCacheEnabled !== false;
     
     // Счетчик успешных и неудачных запросов
     this.requestStats = {
@@ -48,7 +64,54 @@ class LLMClient {
       maxTime: 0
     };
     
-    logger.info(`LLMClient инициализирован с моделью ${this.model}`);
+    // Идентификатор для логирования запросов
+    this.trackingLLMInteractions = this.config.trackLLMInteractions !== false;
+    
+    // Инициализируем promptManager, если не инициализирован
+    this._initializePromptManager();
+    
+    logger.info(`LLMClient инициализирован с моделью ${this.model} (провайдер: ${this.provider})`);
+  }
+
+  /**
+   * Инициализирует менеджер промптов
+   * @private
+   */
+  async _initializePromptManager() {
+    try {
+      if (!promptManager.initialized) {
+        await promptManager.initialize();
+      }
+    } catch (error) {
+      logger.warn('Не удалось инициализировать менеджер промптов:', error.message);
+    }
+  }
+
+  /**
+   * Логирует взаимодействие с LLM в базу данных
+   * @param {string} prompt - Текст промпта
+   * @param {string} response - Ответ от LLM
+   * @param {number} tokensUsed - Количество использованных токенов
+   * @param {string} modelUsed - Использованная модель
+   * @param {number} taskId - ID задачи (опционально)
+   * @private
+   */
+  async _logLLMInteraction(prompt, response, tokensUsed, modelUsed, taskId = null) {
+    if (!this.trackingLLMInteractions) return;
+    
+    try {
+      const connection = await pool.getConnection();
+      
+      await connection.query(
+        'INSERT INTO llm_interactions (task_id, prompt, response, model_used, tokens_used) VALUES (?, ?, ?, ?, ?)',
+        [taskId, prompt, response, modelUsed, tokensUsed]
+      );
+      
+      connection.release();
+      logger.debug('Взаимодействие с LLM успешно записано в БД');
+    } catch (error) {
+      logger.error('Ошибка при логировании взаимодействия с LLM:', error);
+    }
   }
 
   /**
@@ -236,13 +299,103 @@ class LLMClient {
   }
 
   /**
+   * Подготавливает запрос к API в зависимости от провайдера
+   * @param {string} prompt - Текст промпта
+   * @param {Object} options - Параметры запроса
+   * @returns {Object} - Подготовленный запрос
+   * @private
+   */
+  _prepareRequest(prompt, options) {
+    const model = options.model || this.model;
+    const maxTokens = options.maxTokens || this.maxTokens;
+    const temperature = options.temperature || this.temperature;
+    
+    // В зависимости от провайдера формируем разные структуры запроса
+    switch (this.provider) {
+      case 'anthropic':
+        return {
+          url: `${this.apiUrl}/v1/messages`,
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': this.apiKey,
+            'anthropic-version': '2023-06-01'
+          },
+          data: {
+            model,
+            max_tokens: maxTokens,
+            temperature,
+            messages: [
+              { role: "user", content: prompt }
+            ]
+          }
+        };
+        
+      case 'openai':
+        return {
+          url: `${this.apiUrl}/v1/chat/completions`,
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.apiKey}`
+          },
+          data: {
+            model,
+            max_tokens: maxTokens,
+            temperature,
+            messages: [
+              { role: "user", content: prompt }
+            ]
+          }
+        };
+        
+      default:
+        throw new Error(`Неподдерживаемый провайдер LLM: ${this.provider}`);
+    }
+  }
+
+  /**
+   * Обрабатывает ответ API в зависимости от провайдера
+   * @param {Object} response - Ответ от API
+   * @returns {Object} - Обработанный ответ
+   * @private
+   */
+  _processResponse(response) {
+    switch (this.provider) {
+      case 'anthropic':
+        return {
+          content: response.data.content[0].text,
+          usage: response.data.usage || {
+            prompt_tokens: 0,
+            completion_tokens: Math.ceil(response.data.content[0].text.length / 4),
+            total_tokens: Math.ceil(response.data.content[0].text.length / 4)
+          },
+          model: response.data.model
+        };
+        
+      case 'openai':
+        return {
+          content: response.data.choices[0].message.content,
+          usage: response.data.usage,
+          model: response.data.model
+        };
+        
+      default:
+        throw new Error(`Неподдерживаемый провайдер LLM: ${this.provider}`);
+    }
+  }
+
+  /**
    * Отправка запроса к LLM API с улучшенными возможностями
    * @param {string} prompt - Промпт для LLM
    * @param {Object} options - Опции запроса
-   * @returns {Promise<string>} - Ответ от LLM
+   * @param {Object} metadata - Метаданные запроса (например, taskId)
+   * @returns {Promise<string|Object>} - Ответ от LLM
    */
-  async sendPrompt(prompt, options = {}) {
+  async sendPrompt(prompt, options = {}, metadata = {}) {
     this.requestStats.sent++;
+    
+    // Параметр returnFull определяет формат возврата (только текст или полный объект)
+    const returnFull = options.returnFull === true;
+    delete options.returnFull;
     
     try {
       // Применяем оптимизации промпта
@@ -253,15 +406,33 @@ class LLMClient {
         logger.debug('Рекомендации по оптимизации промпта:', optimizationSuggestions.recommendations);
       }
       
-      // Проверяем кэш если он включен
+      // Проверяем улучшенный кэш, если он включен
+      if (this.enhancedCacheEnabled) {
+        try {
+          const cacheKey = this.createCacheKey(prompt, options);
+          const cachedResponse = await llmCache.get(cacheKey);
+          
+          if (cachedResponse) {
+            logger.debug('Использован улучшенный кэшированный ответ LLM');
+            this.requestStats.cached++;
+            
+            return returnFull ? cachedResponse : cachedResponse.content;
+          }
+        } catch (error) {
+          logger.warn('Ошибка при проверке улучшенного кэша:', error.message);
+        }
+      }
+      
+      // Проверяем встроенный кэш для совместимости, если он включен
       if (this.cacheEnabled) {
         const cacheKey = this.createCacheKey(prompt, options);
         const cachedResponse = this.cache.get(cacheKey);
         
         if (cachedResponse) {
-          logger.debug('Использован кэшированный ответ LLM');
+          logger.debug('Использован встроенный кэшированный ответ LLM');
           this.requestStats.cached++;
-          return cachedResponse;
+          
+          return returnFull ? { content: cachedResponse, cached: true } : cachedResponse;
         }
       }
       
@@ -276,26 +447,20 @@ class LLMClient {
       }
       
       // Обрабатываем ограничения контекста
-      const maxContextTokens = config.maxContextTokens || 16000;
+      const maxContextTokens = this.config.maxContextTokens || 16000;
       const processedPrompt = this.processContextLimitations(prompt, maxContextTokens);
       
-      const requestOptions = {
-        model: options.model || this.model,
-        max_tokens: options.maxTokens || this.maxTokens,
-        temperature: options.temperature || this.temperature,
-        messages: [
-          { role: "user", content: processedPrompt }
-        ]
-      };
-
-      logger.debug(`Отправка запроса к LLM API: ${JSON.stringify({
-        model: requestOptions.model,
-        max_tokens: requestOptions.max_tokens,
-        temperature: requestOptions.temperature,
+      // Подготавливаем запрос
+      const request = this._prepareRequest(processedPrompt, options);
+      
+      logger.debug(`Отправка запроса к ${this.provider} API: ${JSON.stringify({
+        model: request.data.model,
+        max_tokens: request.data.max_tokens,
+        temperature: request.data.temperature,
         prompt_length: processedPrompt.length,
         estimated_tokens: estimatedPromptTokens
       })}`);
-
+      
       // Реализуем механизм повторных попыток
       let retries = 0;
       let lastError = null;
@@ -305,15 +470,9 @@ class LLMClient {
           const startTime = Date.now();
           
           const response = await axios.post(
-            `${this.apiUrl}/v1/messages`,  // Обновленный эндпоинт для Claude API
-            requestOptions,
-            {
-              headers: {
-                'Content-Type': 'application/json',
-                'x-api-key': this.apiKey,
-                'anthropic-version': '2023-06-01'  // Актуальная версия на момент написания
-              }
-            }
+            request.url,
+            request.data,
+            { headers: request.headers }
           );
           
           const endTime = Date.now();
@@ -322,48 +481,65 @@ class LLMClient {
           // Обновляем статистику времени отклика
           this.updateResponseTimeStats(responseTime);
           
+          // Обрабатываем ответ
+          const processedResponse = this._processResponse(response);
+          
           // Обновляем счетчик использования токенов
-          if (response.data.usage) {
-            const promptTokens = response.data.usage.prompt_tokens || estimatedPromptTokens;
-            const completionTokens = response.data.usage.completion_tokens || 
-                                     (response.data.content[0].text.length / 4); // грубая оценка
-            
+          if (processedResponse.usage) {
             tokenManager.trackUsage(
-              requestOptions.model,
-              promptTokens,
-              completionTokens
+              request.data.model,
+              processedResponse.usage.prompt_tokens || estimatedPromptTokens,
+              processedResponse.usage.completion_tokens || Math.ceil(processedResponse.content.length / 4)
             );
           } else {
             // Если API не вернуло статистику токенов, используем оценку
             tokenManager.trackUsage(
-              requestOptions.model,
+              request.data.model,
               estimatedPromptTokens,
-              response.data.content[0].text.length / 4 // грубая оценка
+              Math.ceil(processedResponse.content.length / 4)
             );
           }
-
-          logger.debug(`Получен ответ от LLM API за ${responseTime}ms`);
+          
+          logger.debug(`Получен ответ от ${this.provider} API за ${responseTime}ms`);
           this.requestStats.successful++;
           
-          // Извлекаем содержимое ответа
-          const content = response.data.content[0].text;
-          
-          // Сохраняем ответ в кэш если он включен
-          if (this.cacheEnabled) {
-            const cacheKey = this.createCacheKey(prompt, options);
-            this.cache.set(cacheKey, content);
+          // Логируем взаимодействие с LLM в БД
+          if (this.trackingLLMInteractions) {
+            await this._logLLMInteraction(
+              processedPrompt,
+              processedResponse.content,
+              processedResponse.usage?.total_tokens || estimatedTotalTokens,
+              processedResponse.model || request.data.model,
+              metadata.taskId
+            );
           }
           
-          return content;
+          // Сохраняем ответ в улучшенном кэше
+          if (this.enhancedCacheEnabled) {
+            try {
+              await llmCache.set(this.createCacheKey(prompt, options), processedResponse);
+            } catch (error) {
+              logger.warn('Ошибка при сохранении в улучшенный кэш:', error.message);
+            }
+          }
+          
+          // Сохраняем ответ в встроенном кэше для совместимости
+          if (this.cacheEnabled) {
+            const cacheKey = this.createCacheKey(prompt, options);
+            this.cache.set(cacheKey, processedResponse.content);
+          }
+          
+          return returnFull ? processedResponse : processedResponse.content;
         } catch (error) {
           lastError = error;
           
           // Если ошибка связана с превышением лимита токенов
           if (error.response && error.response.status === 400 && 
+              error.response.data.error && 
               (error.response.data.error.type === 'context_length_exceeded' || 
                error.response.data.error.type === 'rate_limit_exceeded')) {
             
-            logger.warn(`Ошибка LLM API: ${error.response.data.error.type}`);
+            logger.warn(`Ошибка ${this.provider} API: ${error.response.data.error.type}`);
             
             // Для ошибки превышения контекста - усекаем еще сильнее
             if (error.response.data.error.type === 'context_length_exceeded') {
@@ -384,7 +560,7 @@ class LLMClient {
           
           // Временные ошибки сети или сервера
           if (!error.response || error.response.status >= 500 || error.code === 'ECONNRESET') {
-            logger.warn(`Временная ошибка LLM API (попытка ${retries+1}/${this.maxRetries+1}): ${error.message}`);
+            logger.warn(`Временная ошибка ${this.provider} API (попытка ${retries+1}/${this.maxRetries+1}): ${error.message}`);
             await new Promise(resolve => setTimeout(resolve, this.retryDelay * Math.pow(2, retries)));
             retries++;
             continue;
@@ -397,11 +573,99 @@ class LLMClient {
       
       // Если все попытки исчерпаны
       this.requestStats.failed++;
-      throw lastError || new Error('Превышено количество попыток запроса к LLM API');
+      throw lastError || new Error(`Превышено количество попыток запроса к ${this.provider} API`);
     } catch (error) {
       this.requestStats.failed++;
-      logger.error('Ошибка при отправке запроса к LLM API:', error);
-      throw new Error(`Ошибка LLM API: ${error.message}`);
+      logger.error(`Ошибка при отправке запроса к ${this.provider} API:`, error);
+      throw new Error(`Ошибка ${this.provider} API: ${error.message}`);
+    }
+  }
+
+  /**
+   * Отправляет запрос с использованием шаблона
+   * @param {string} templateName - Имя шаблона
+   * @param {Object} templateData - Данные для шаблона
+   * @param {Object} options - Параметры запроса
+   * @param {Object} metadata - Метаданные запроса
+   * @returns {Promise<string|Object>} - Ответ от LLM
+   */
+  async sendPromptTemplate(templateName, templateData = {}, options = {}, metadata = {}) {
+    try {
+      // Проверяем инициализацию promptManager
+      await this._initializePromptManager();
+      
+      // Заполняем шаблон данными
+      const prompt = await promptManager.fillPrompt(templateName, templateData);
+      
+      // Добавляем метку к метаданным для отслеживания
+      const enhancedMetadata = {
+        ...metadata,
+        templateName,
+        templateData: JSON.stringify(templateData).substring(0, 100) + '...'
+      };
+      
+      // Отправляем запрос
+      return await this.sendPrompt(prompt, options, enhancedMetadata);
+    } catch (error) {
+      logger.error(`Ошибка при отправке запроса по шаблону ${templateName}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Отправляет цепочку промптов
+   * @param {Array<Object>} chain - Цепочка промптов
+   * @param {Object} options - Параметры запроса
+   * @param {Object} metadata - Метаданные запроса
+   * @returns {Promise<string|Object>} - Ответ от LLM
+   */
+  async sendPromptChain(chain, options = {}, metadata = {}) {
+    try {
+      // Проверяем инициализацию promptManager
+      await this._initializePromptManager();
+      
+      // Создаем цепочку промптов
+      const prompt = await promptManager.createPromptChain(chain);
+      
+      // Добавляем метку к метаданным для отслеживания
+      const enhancedMetadata = {
+        ...metadata,
+        chainLength: chain.length,
+        chainTemplates: chain.map(item => item.template).join(',')
+      };
+      
+      // Отправляем запрос
+      return await this.sendPrompt(prompt, options, enhancedMetadata);
+    } catch (error) {
+      logger.error(`Ошибка при отправке цепочки промптов:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Выполняет диалог с LLM, передавая контекст из предыдущих сообщений
+   * @param {Array<Object>} messages - Массив сообщений {role, content}
+   * @param {Object} options - Параметры запроса
+   * @param {Object} metadata - Метаданные запроса
+   * @returns {Promise<Object>} - Ответ от LLM
+   */
+  async chat(messages, options = {}, metadata = {}) {
+    try {
+      // Формируем один промпт из всех сообщений
+      let combinedPrompt = '';
+      
+      for (const message of messages) {
+        const role = message.role === 'user' ? 'Human' : 'Assistant';
+        combinedPrompt += `${role}: ${message.content}\n\n`;
+      }
+      
+      combinedPrompt += 'Assistant: ';
+      
+      // Отправляем запрос
+      return await this.sendPrompt(combinedPrompt, { ...options, returnFull: true }, metadata);
+    } catch (error) {
+      logger.error('Ошибка при выполнении диалога с LLM:', error);
+      throw error;
     }
   }
 
@@ -430,7 +694,9 @@ class LLMClient {
     const avgResponseTime = this.responseTimeStats.requestCount > 0 ? 
       this.responseTimeStats.totalTime / this.responseTimeStats.requestCount : 0;
     
-    return {
+    const stats = {
+      provider: this.provider,
+      model: this.model,
       requests: {
         ...this.requestStats,
         successRate: this.requestStats.sent > 0 ? 
@@ -446,20 +712,47 @@ class LLMClient {
       },
       tokens: tokenManager.getStats()
     };
+    
+    // Добавляем статистику улучшенного кэша, если он включен
+    if (this.enhancedCacheEnabled) {
+      try {
+        stats.enhancedCache = llmCache.getStats();
+      } catch (error) {
+        logger.warn('Не удалось получить статистику улучшенного кэша:', error.message);
+      }
+    }
+    
+    return stats;
   }
 
   /**
    * Создание векторного представления (эмбеддинга) текста
    * @param {string} text - Текст для векторизации
+   * @param {Object} options - Параметры запроса
    * @returns {Promise<Array>} - Векторное представление
    */
-  async createEmbedding(text) {
+  async createEmbedding(text, options = {}) {
     try {
-      // Проверяем кэш
-      const cacheKey = `embedding_${crypto.createHash('md5').update(text).digest('hex')}`;
+      // Проверяем кэш для эмбеддингов
+      const embeddingCacheKey = `embedding_${crypto.createHash('md5').update(text).digest('hex')}`;
       
+      // Проверяем улучшенный кэш, если он включен
+      if (this.enhancedCacheEnabled) {
+        try {
+          const cachedEmbedding = await llmCache.get(embeddingCacheKey);
+          
+          if (cachedEmbedding && Array.isArray(cachedEmbedding.embedding)) {
+            logger.debug('Использован улучшенный кэшированный эмбеддинг');
+            return cachedEmbedding.embedding;
+          }
+        } catch (error) {
+          logger.warn('Ошибка при проверке улучшенного кэша для эмбеддинга:', error.message);
+        }
+      }
+      
+      // Проверяем встроенный кэш для совместимости
       if (this.cacheEnabled) {
-        const cachedEmbedding = this.cache.get(cacheKey);
+        const cachedEmbedding = this.cache.get(embeddingCacheKey);
         
         if (cachedEmbedding) {
           logger.debug('Использован кэшированный эмбеддинг');
@@ -467,26 +760,46 @@ class LLMClient {
         }
       }
       
-      // Anthropic не предоставляет API эмбеддингов, используем OpenAI
-      const response = await axios.post(
-        'https://api.openai.com/v1/embeddings',
-        {
-          input: text,
-          model: 'text-embedding-ada-002'
-        },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${process.env.OPENAI_API_KEY || this.apiKey}`
-          }
-        }
-      );
-
-      const embedding = response.data.data[0].embedding;
+      // Выбираем провайдера эмбеддингов
+      const embeddingProvider = options.embeddingProvider || 'openai';
+      const embeddingModel = options.embeddingModel || 'text-embedding-ada-002';
+      const embeddingApiKey = options.embeddingApiKey || process.env.OPENAI_API_KEY || this.apiKey;
       
-      // Сохраняем в кэш
+      let embedding = [];
+      
+      // Запрос эмбеддингов в зависимости от провайдера
+      if (embeddingProvider === 'openai') {
+        const response = await axios.post(
+          'https://api.openai.com/v1/embeddings',
+          {
+            input: text,
+            model: embeddingModel
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${embeddingApiKey}`
+            }
+          }
+        );
+        
+        embedding = response.data.data[0].embedding;
+      } else {
+        throw new Error(`Неподдерживаемый провайдер эмбеддингов: ${embeddingProvider}`);
+      }
+      
+      // Сохраняем в улучшенном кэше
+      if (this.enhancedCacheEnabled) {
+        try {
+          await llmCache.set(embeddingCacheKey, { embedding });
+        } catch (error) {
+          logger.warn('Ошибка при сохранении эмбеддинга в улучшенный кэш:', error.message);
+        }
+      }
+      
+      // Сохраняем в встроенном кэше для совместимости
       if (this.cacheEnabled) {
-        this.cache.set(cacheKey, embedding);
+        this.cache.set(embeddingCacheKey, embedding);
       }
       
       return embedding;
@@ -497,7 +810,7 @@ class LLMClient {
       if (error.response && error.response.status >= 500) {
         logger.info('Повторная попытка создания эмбеддинга...');
         await new Promise(resolve => setTimeout(resolve, 1000));
-        return this.createEmbedding(text);
+        return this.createEmbedding(text, options);
       }
       
       return [];
@@ -513,22 +826,61 @@ class LLMClient {
   }
 
   /**
-   * Очистка кэша
+   * Очистка встроенного кэша
    */
   clearCache() {
     this.cache.flushAll();
     logger.info('Кэш LLM клиента очищен');
+  }
+
+  /**
+   * Очистка всех кэшей (встроенного и улучшенного)
+   */
+  async clearAllCaches() {
+    // Очищаем встроенный кэш
+    this.clearCache();
+    
+    // Очищаем улучшенный кэш, если он включен
+    if (this.enhancedCacheEnabled) {
+      try {
+        await llmCache.clear();
+        logger.info('Улучшенный кэш LLM клиента очищен');
+      } catch (error) {
+        logger.error('Ошибка при очистке улучшенного кэша:', error);
+      }
+    }
+  }
+
+  /**
+   * Добавляет или обновляет шаблон промпта
+   * @param {string} templateName - Имя шаблона
+   * @param {string} templateContent - Содержимое шаблона
+   * @returns {Promise<void>}
+   */
+  async addTemplate(templateName, templateContent) {
+    await this._initializePromptManager();
+    await promptManager.addTemplate(templateName, templateContent);
+  }
+
+  /**
+   * Получает список всех доступных шаблонов
+   * @param {string} category - Категория шаблонов (опционально)
+   * @returns {Promise<Array<string>>} - Список имен шаблонов
+   */
+  async listTemplates(category = null) {
+    await this._initializePromptManager();
+    return await promptManager.listTemplates(category);
   }
 }
 
 // Создание и экспорт экземпляра клиента
 let llmClient = null;
 
-const getLLMClient = () => {
-  if (!llmClient) {
-    llmClient = new LLMClient();
+const getLLMClient = (config = {}) => {
+  if (!llmClient || Object.keys(config).length > 0) {
+    llmClient = new LLMClient(config);
   }
   return llmClient;
 };
 
-module.exports = { getLLMClient };
+module.exports = { getLLMClient, LLMClient };

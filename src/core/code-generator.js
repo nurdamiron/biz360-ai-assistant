@@ -3,7 +3,7 @@
 const { pool } = require('../config/db.config');
 const logger = require('../utils/logger');
 const { getLLMClient } = require('../utils/llm-client');
-const codeValidator = require('../utils/code-validator');
+const codeValidator = require('../utils/validators/code-validator');
 const taskLogger = require('../utils/task-logger');
 
 /**
