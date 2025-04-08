@@ -1,172 +1,199 @@
 // src/core/task-planner/decomposer.js
-
-const { getLLMClient } = require('../../utils/llm-client');
 const logger = require('../../utils/logger');
-const { pool } = require('../../config/db.config');
+const llmClient = require('../../utils/llm-client');
+const { getPromptTemplate } = require('../../utils');
+const projectContext = require('../project-understanding');
+const taskAnalyzer = require('./task-analyzer');
 
 /**
- * Класс для декомпозиции высокоуровневых задач на подзадачи
+ * Класс для декомпозиции задач с использованием AI
  */
 class TaskDecomposer {
-  constructor(projectId) {
-    this.projectId = projectId;
-    this.llmClient = getLLMClient();
-  }
-
   /**
-   * Получает информацию о проекте
-   * @returns {Promise<Object>} - Информация о проекте
-   */
-  async getProjectInfo() {
-    try {
-      const connection = await pool.getConnection();
-      
-      const [projects] = await connection.query(
-        'SELECT * FROM projects WHERE id = ?',
-        [this.projectId]
-      );
-      
-      connection.release();
-      
-      if (projects.length === 0) {
-        throw new Error(`Проект с id=${this.projectId} не найден`);
-      }
-      
-      return projects[0];
-    } catch (error) {
-      logger.error('Ошибка при получении информации о проекте:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Декомпозирует высокоуровневую задачу на подзадачи
-   * @param {Object} task - Высокоуровневая задача
+   * Декомпозиция задачи на подзадачи
+   * @param {object} task - Объект задачи
+   * @param {object} options - Дополнительные параметры
    * @returns {Promise<Array>} - Массив подзадач
    */
-  async decompose(task) {
+  async decomposeTask(task, options = {}) {
+    logger.info(`Decomposing task ID: ${task.id}, title: ${task.title}`);
+    
     try {
-      logger.info(`Начинаем декомпозицию задачи "${task.title}"`);
+      // Шаг 1: Анализируем задачу для получения дополнительного контекста
+      const taskAnalysis = await taskAnalyzer.analyzeTask(task);
       
-      // Получаем информацию о проекте
-      const projectInfo = await this.getProjectInfo();
+      // Шаг 2: Получаем контекст проекта
+      const { projectId } = task;
+      const projectContextData = await projectContext.getContextForTask(task);
       
-      // Создаем промпт для декомпозиции
-      const prompt = await this.createDecompositionPrompt(task, projectInfo);
+      // Шаг 3: Получаем шаблон промпта для декомпозиции
+      const promptTemplate = await getPromptTemplate('task-decomposition');
       
-      // Отправляем запрос к LLM
-      const response = await this.llmClient.sendPrompt(prompt);
+      // Шаг 4: Формируем контекст для промпта
+      const promptContext = {
+        taskId: task.id,
+        taskTitle: task.title,
+        taskDescription: task.description,
+        taskPriority: task.priority,
+        projectContext: projectContextData,
+        taskAnalysis,
+        maxSubtasks: options.maxSubtasks || 10,
+        preferredTechnologies: projectContextData.technologies || [],
+        codeExamples: projectContextData.codeExamples || [],
+        repositoryStructure: projectContextData.repositoryStructure || [],
+        testingStrategy: projectContextData.testingStrategy || 'unit'
+      };
       
-      // Парсим ответ и извлекаем подзадачи
-      const subtasks = this.parseSubtasksFromResponse(response);
+      // Шаг 5: Отправляем запрос к LLM
+      const response = await llmClient.generateStructuredContent(
+        promptTemplate, 
+        promptContext,
+        { format: 'json' }
+      );
       
-      logger.info(`Задача "${task.title}" декомпозирована на ${subtasks.length} подзадач`);
+      // Шаг 6: Обрабатываем и валидируем ответ
+      let subtasks = [];
+      
+      try {
+        if (typeof response === 'string') {
+          subtasks = JSON.parse(response).subtasks;
+        } else if (response && response.subtasks) {
+          subtasks = response.subtasks;
+        } else {
+          throw new Error('Invalid response format from LLM');
+        }
+        
+        // Валидация полученных подзадач
+        subtasks = subtasks.map((subtask, index) => ({
+          title: subtask.title || `Subtask ${index + 1}`,
+          description: subtask.description || '',
+          estimatedHours: parseFloat(subtask.estimatedHours) || 1,
+          priority: subtask.priority || 'medium',
+          order: index,
+          dependencies: subtask.dependencies || [],
+          skills: subtask.skills || [],
+          codeFiles: subtask.codeFiles || [],
+          testCoverage: subtask.testCoverage || false
+        }));
+      } catch (parseError) {
+        logger.error(`Error parsing LLM response: ${parseError.message}`, {
+          error: parseError.stack,
+          response
+        });
+        
+        // Если не удалось разобрать ответ, создаем одну общую подзадачу
+        subtasks = [{
+          title: 'Implement the task',
+          description: `Failed to decompose task automatically. Original task: ${task.title}`,
+          estimatedHours: 4,
+          priority: 'medium',
+          order: 0
+        }];
+      }
+      
+      logger.info(`Successfully decomposed task ID ${task.id} into ${subtasks.length} subtasks`);
       
       return subtasks;
     } catch (error) {
-      logger.error(`Ошибка при декомпозиции задачи:`, error);
-      throw error;
+      logger.error(`Error decomposing task: ${error.message}`, {
+        taskId: task.id,
+        error: error.stack
+      });
+      
+      // В случае ошибки возвращаем базовую декомпозицию
+      return [{
+        title: 'Implement the task',
+        description: `Failed to decompose task automatically. Original task: ${task.title}. Error: ${error.message}`,
+        estimatedHours: 4,
+        priority: 'medium',
+        order: 0
+      }];
     }
   }
 
   /**
-   * Создает промпт для декомпозиции задачи
-   * @param {Object} task - Задача для декомпозиции
-   * @param {Object} projectInfo - Информация о проекте
-   * @returns {Promise<string>} - Промпт для LLM
+   * Оценка приоритетов и зависимостей между подзадачами
+   * @param {Array} subtasks - Массив подзадач
+   * @returns {Promise<Array>} - Массив подзадач с обновленными приоритетами
    */
-  async createDecompositionPrompt(task, projectInfo) {
-    return `
-# Декомпозиция задачи разработки
-
-Ты - опытный разработчик и архитектор, который помогает разбивать сложные задачи на подзадачи.
-
-## Проект
-Название: ${projectInfo.name}
-Описание: ${projectInfo.description}
-
-## Задача для декомпозиции
-Название: ${task.title}
-Описание: ${task.description}
-
-## Инструкции
-1. Разбей эту задачу на 3-7 последовательных подзадач, каждая из которых представляет четкий шаг в реализации общей задачи.
-2. Подзадачи должны быть конкретными, выполнимыми и логически связанными.
-3. Подзадачи должны следовать в порядке, необходимом для выполнения общей задачи.
-4. Каждая подзадача должна иметь четкий заголовок и подробное описание того, что нужно сделать.
-
-## Формат ответа
-Выдай подзадачи в формате:
-
-SUBTASK: [Заголовок подзадачи 1]
-DESCRIPTION: [Подробное описание подзадачи 1]
-
-SUBTASK: [Заголовок подзадачи 2]
-DESCRIPTION: [Подробное описание подзадачи 2]
-
-И так далее для каждой подзадачи.
-`;
-  }
-
-  /**
-   * Парсит ответ LLM и извлекает подзадачи
-   * @param {string} response - Ответ от LLM
-   * @returns {Array} - Массив подзадач
-   */
-  parseSubtasksFromResponse(response) {
+  async prioritizeSubtasks(subtasks) {
+    logger.info(`Prioritizing ${subtasks.length} subtasks`);
+    
+    // Если подзадач мало, возвращаем как есть
+    if (subtasks.length <= 3) {
+      return subtasks.map((subtask, index) => ({
+        ...subtask,
+        order: index
+      }));
+    }
+    
     try {
-      const subtasks = [];
+      // Получаем шаблон промпта для приоритизации
+      const promptTemplate = await getPromptTemplate('subtask-prioritization');
       
-      // Регулярное выражение для извлечения подзадач и их описаний
-      const regex = /SUBTASK:\s*(.+?)[\r\n]+DESCRIPTION:\s*([\s\S]+?)(?=\n\s*SUBTASK:|$)/g;
+      // Формируем контекст для промпта
+      const promptContext = {
+        subtasks: subtasks.map(s => ({
+          title: s.title,
+          description: s.description,
+          estimatedHours: s.estimatedHours,
+          priority: s.priority,
+          dependencies: s.dependencies,
+          skills: s.skills
+        }))
+      };
       
-      let match;
-      while ((match = regex.exec(response)) !== null) {
-        subtasks.push({
-          title: match[1].trim(),
-          description: match[2].trim()
-        });
-      }
+      // Отправляем запрос к LLM
+      const response = await llmClient.generateStructuredContent(
+        promptTemplate, 
+        promptContext,
+        { format: 'json' }
+      );
       
-      // Проверяем, что удалось извлечь подзадачи
-      if (subtasks.length === 0) {
-        logger.warn('Не удалось извлечь подзадачи из ответа LLM:', response);
+      // Обрабатываем ответ
+      let prioritizedSubtasks = [];
+      
+      try {
+        if (typeof response === 'string') {
+          prioritizedSubtasks = JSON.parse(response).subtasks;
+        } else if (response && response.subtasks) {
+          prioritizedSubtasks = response.subtasks;
+        } else {
+          throw new Error('Invalid response format from LLM');
+        }
         
-        // Пытаемся использовать альтернативный формат (маркированный список)
-        const lines = response.split('\n');
-        let currentSubtask = null;
-        
-        for (const line of lines) {
-          const trimmedLine = line.trim();
+        // Объединяем результаты с оригинальными подзадачами
+        const result = subtasks.map(original => {
+          const prioritized = prioritizedSubtasks.find(p => p.title === original.title) || {};
           
-          if (trimmedLine.match(/^\d+\.\s+/) || trimmedLine.match(/^-\s+/) || trimmedLine.match(/^\*\s+/)) {
-            // Новая подзадача
-            if (currentSubtask) {
-              subtasks.push(currentSubtask);
-            }
-            
-            currentSubtask = {
-              title: trimmedLine.replace(/^(\d+\.|[-*])\s+/, ''),
-              description: ''
-            };
-          } else if (currentSubtask && trimmedLine.length > 0) {
-            // Дополнение к описанию текущей подзадачи
-            currentSubtask.description += (currentSubtask.description ? '\n' : '') + trimmedLine;
-          }
-        }
+          return {
+            ...original,
+            order: prioritized.order !== undefined ? prioritized.order : original.order,
+            priority: prioritized.priority || original.priority,
+            dependencies: prioritized.dependencies || original.dependencies
+          };
+        });
         
-        // Добавляем последнюю подзадачу
-        if (currentSubtask) {
-          subtasks.push(currentSubtask);
-        }
+        // Сортируем по порядку
+        return result.sort((a, b) => a.order - b.order);
+      } catch (parseError) {
+        logger.error(`Error parsing LLM prioritization response: ${parseError.message}`, {
+          error: parseError.stack,
+          response
+        });
+        
+        // Возвращаем оригинальные подзадачи
+        return subtasks;
       }
-      
-      return subtasks;
     } catch (error) {
-      logger.error('Ошибка при парсинге подзадач из ответа LLM:', error);
-      return [];
+      logger.error(`Error prioritizing subtasks: ${error.message}`, {
+        error: error.stack
+      });
+      
+      // В случае ошибки возвращаем оригинальные подзадачи
+      return subtasks;
     }
   }
 }
 
-module.exports = TaskDecomposer;
+module.exports = new TaskDecomposer();

@@ -17,6 +17,12 @@ const commentsRoutes = require('./routes/comments'); // Маршруты ком�
 const codeReviewRoutes = require('./routes/code-review'); // Маршруты проверки кода
 const gitIntegrationRoutes = require('./routes/git-integration'); // Маршруты Git-интеграции
 const notificationsRoutes = require('./routes/notifications'); // Маршруты уведомлений
+const queueRoutes = require('./routes/queue');
+const feedbackRoutes = require('./routes/feedback');
+const integrationRoutes = require('./routes/integration');
+
+
+
 
 // Открытые маршруты
 router.get('/status', (req, res) => {
@@ -55,6 +61,9 @@ router.use('/comments', commentsRoutes);
 router.use('/code-review', codeReviewRoutes);
 router.use('/git', gitIntegrationRoutes); // Маршруты Git-интеграции
 router.use('/notifications', notificationsRoutes); // Новые маршруты уведомлений
+router.use('/queues', queueRoutes);
+router.use('/feedback', feedbackRoutes);
+router.use('/integrations', integrationRoutes);
 
 // Обработчик для несуществующих маршрутов
 router.use('*', (req, res) => {

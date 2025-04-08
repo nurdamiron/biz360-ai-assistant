@@ -1,0 +1,59 @@
+// src/templates/prompts/test-generation-react.txt
+Сгенерируй тесты для компонента React, используя React Testing Library:
+
+ПУТЬ К ФАЙЛУ:
+{{filePath}}
+
+КОД КОМПОНЕНТА:
+```javascript
+{{fileContent}}
+```
+
+ФРЕЙМВОРК:
+{{testFramework}}
+
+РЕЗУЛЬТАТЫ ВАЛИДАЦИИ:
+{{#if validationResults}}
+{{#each validationResults.warnings}}
+- Предупреждение: {{message}} (строка {{line}})
+{{/each}}
+{{#each validationResults.criticalErrors}}
+- Ошибка: {{message}} (строка {{line}})
+{{/each}}
+{{else}}
+Валидация не проводилась или результаты отсутствуют.
+{{/if}}
+
+ДОПОЛНИТЕЛЬНЫЙ КОНТЕКСТ:
+{{#if dependentFiles}}
+Зависимые файлы:
+{{#each dependentFiles}}
+{{path}}
+```javascript
+{{content}}
+```
+{{/each}}
+{{/if}}
+
+{{#if existingTests}}
+Примеры существующих тестов:
+{{#each existingTests}}
+{{path}}
+```javascript
+{{content}}
+```
+{{/each}}
+{{/if}}
+
+ИНСТРУКЦИИ:
+1. Сгенерируй набор тестов для этого React-компонента, используя React Testing Library.
+2. Проверь рендеринг компонента с разными пропсами.
+3. Тестируй пользовательские события (клики, ввод текста и т.д.).
+4. Проверь условный рендеринг (если есть).
+5. Моки необходимых контекстов, хуков или Redux-состояния.
+6. Добавь снимки (snapshots), если необходимо.
+7. Структурируй тесты логично, группируя их в describe-блоки.
+
+{{#if testFramework}}
+Используй синтаксис и возможности фреймворка {{testFramework}} с React Testing Library.
+{{/if}}

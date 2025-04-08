@@ -1,0 +1,1427 @@
+СТРУКТУРА БАЗЫ ДАННЫХ
+==================================================
+
+ТАБЛИЦА: api_key_logs
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  api_key_id int NOT NULL MUL  
+  method varchar(10) NOT NULL   
+  path varchar(255) NOT NULL   
+  ip_address varchar(50) NOT NULL   
+  user_agent varchar(255) NULL   
+  timestamp timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+
+Внешние ключи:
+  api_key_logs_ibfk_1: api_key_logs.api_key_id -> api_keys.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  idx_api_key_logs_api_key_id : (api_key_id)
+
+SQL создания таблицы:
+CREATE TABLE `api_key_logs` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `api_key_id` int NOT NULL,
+  `method` varchar(10) NOT NULL,
+  `path` varchar(255) NOT NULL,
+  `ip_address` varchar(50) NOT NULL,
+  `user_agent` varchar(255) DEFAULT NULL,
+  `timestamp` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_api_key_logs_api_key_id` (`api_key_id`),
+  CONSTRAINT `api_key_logs_ibfk_1` FOREIGN KEY (`api_key_id`) REFERENCES `api_keys` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: api_keys
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  api_key varchar(255) NOT NULL UNI  
+  name varchar(100) NOT NULL   
+  user_id int NULL MUL  
+  scope varchar(255) NULL   
+  active tinyint(1) NULL  DEFAULT 1 
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+  expires_at timestamp NULL   
+
+Внешние ключи:
+  api_keys_ibfk_1: api_keys.user_id -> users.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  api_key UNIQUE: (api_key)
+  idx_api_keys_user_id : (user_id)
+
+SQL создания таблицы:
+CREATE TABLE `api_keys` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `api_key` varchar(255) NOT NULL,
+  `name` varchar(100) NOT NULL,
+  `user_id` int DEFAULT NULL,
+  `scope` varchar(255) DEFAULT NULL,
+  `active` tinyint(1) DEFAULT '1',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `expires_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `api_key` (`api_key`),
+  KEY `idx_api_keys_user_id` (`user_id`),
+  CONSTRAINT `api_keys_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: code_generations
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  task_id int NOT NULL MUL  
+  file_path varchar(255) NOT NULL MUL  
+  original_content text NULL   
+  generated_content text NOT NULL   
+  status enum('pending_review','approved','rejected','implemented') NULL  DEFAULT pending_review 
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+  updated_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP
+
+Внешние ключи:
+  code_generations_ibfk_1: code_generations.task_id -> tasks.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  idx_code_generations_task : (task_id)
+  file_path : (file_path)
+
+SQL создания таблицы:
+CREATE TABLE `code_generations` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `task_id` int NOT NULL,
+  `file_path` varchar(255) NOT NULL,
+  `original_content` text,
+  `generated_content` text NOT NULL,
+  `status` enum('pending_review','approved','rejected','implemented') DEFAULT 'pending_review',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_code_generations_task` (`task_id`),
+  KEY `file_path` (`file_path`(191)),
+  CONSTRAINT `code_generations_ibfk_1` FOREIGN KEY (`task_id`) REFERENCES `tasks` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: code_reviews
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  task_id int NULL MUL  
+  generation_id int NULL MUL  
+  file_path varchar(255) NOT NULL MUL  
+  language varchar(50) NOT NULL   
+  code text NOT NULL   
+  review_result json NOT NULL   
+  score decimal(3,1) NOT NULL MUL  
+  created_at timestamp NOT NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+  updated_at timestamp NULL   on update CURRENT_TIMESTAMP
+
+Внешние ключи:
+  code_reviews_ibfk_1: code_reviews.task_id -> tasks.id
+  code_reviews_ibfk_2: code_reviews.generation_id -> code_generations.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  task_id : (task_id)
+  generation_id : (generation_id)
+  score : (score)
+  file_path : (file_path)
+
+SQL создания таблицы:
+CREATE TABLE `code_reviews` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `task_id` int DEFAULT NULL,
+  `generation_id` int DEFAULT NULL,
+  `file_path` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `language` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `code` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `review_result` json NOT NULL,
+  `score` decimal(3,1) NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `task_id` (`task_id`),
+  KEY `generation_id` (`generation_id`),
+  KEY `score` (`score`),
+  KEY `file_path` (`file_path`(191)),
+  CONSTRAINT `code_reviews_ibfk_1` FOREIGN KEY (`task_id`) REFERENCES `tasks` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `code_reviews_ibfk_2` FOREIGN KEY (`generation_id`) REFERENCES `code_generations` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+==================================================
+
+ТАБЛИЦА: code_test_results
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  generation_id int NULL MUL  
+  test_run_id varchar(36) NULL   
+  test_success tinyint(1) NULL MUL  
+  coverage_percentage float NULL   
+  test_output text NULL   
+  runtime_ms int NULL   
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  idx_generation_id : (generation_id)
+  idx_test_success : (test_success)
+
+SQL создания таблицы:
+CREATE TABLE `code_test_results` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `generation_id` int DEFAULT NULL,
+  `test_run_id` varchar(36) DEFAULT NULL,
+  `test_success` tinyint(1) DEFAULT NULL,
+  `coverage_percentage` float DEFAULT NULL,
+  `test_output` text,
+  `runtime_ms` int DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_generation_id` (`generation_id`),
+  KEY `idx_test_success` (`test_success`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: code_vectors
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  file_id int NOT NULL MUL  
+  code_segment text NOT NULL   
+  start_line int NOT NULL   
+  end_line int NOT NULL   
+  embedding json NULL   
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+
+Внешние ключи:
+  code_vectors_ibfk_1: code_vectors.file_id -> project_files.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  file_id : (file_id)
+
+SQL создания таблицы:
+CREATE TABLE `code_vectors` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `file_id` int NOT NULL,
+  `code_segment` text NOT NULL,
+  `start_line` int NOT NULL,
+  `end_line` int NOT NULL,
+  `embedding` json DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `file_id` (`file_id`),
+  CONSTRAINT `code_vectors_ibfk_1` FOREIGN KEY (`file_id`) REFERENCES `project_files` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: commits
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  task_id int NOT NULL MUL  
+  commit_hash varchar(64) NOT NULL   
+  commit_message text NOT NULL   
+  committed_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+
+Внешние ключи:
+  commits_ibfk_1: commits.task_id -> tasks.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  task_id : (task_id)
+
+SQL создания таблицы:
+CREATE TABLE `commits` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `task_id` int NOT NULL,
+  `commit_hash` varchar(64) NOT NULL,
+  `commit_message` text NOT NULL,
+  `committed_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `task_id` (`task_id`),
+  CONSTRAINT `commits_ibfk_1` FOREIGN KEY (`task_id`) REFERENCES `tasks` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: feedback
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  code_generation_id int NOT NULL MUL  
+  feedback_text text NOT NULL   
+  rating int NULL   
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+
+Внешние ключи:
+  feedback_ibfk_1: feedback.code_generation_id -> code_generations.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  code_generation_id : (code_generation_id)
+
+SQL создания таблицы:
+CREATE TABLE `feedback` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `code_generation_id` int NOT NULL,
+  `feedback_text` text NOT NULL,
+  `rating` int DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `code_generation_id` (`code_generation_id`),
+  CONSTRAINT `feedback_ibfk_1` FOREIGN KEY (`code_generation_id`) REFERENCES `code_generations` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: feedback_samples
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  task_id int NULL MUL  
+  generation_id int NULL   
+  feedback_type enum('code_quality','task_decomposition','prompt_effectiveness') NULL   
+  original_prompt text NULL   
+  improved_prompt text NULL   
+  effectiveness_score float NULL MUL  
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  idx_task_id : (task_id)
+  idx_effectiveness : (effectiveness_score)
+
+SQL создания таблицы:
+CREATE TABLE `feedback_samples` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `task_id` int DEFAULT NULL,
+  `generation_id` int DEFAULT NULL,
+  `feedback_type` enum('code_quality','task_decomposition','prompt_effectiveness') DEFAULT NULL,
+  `original_prompt` text,
+  `improved_prompt` text,
+  `effectiveness_score` float DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_task_id` (`task_id`),
+  KEY `idx_effectiveness` (`effectiveness_score`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: llm_interactions
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  task_id int NULL MUL  
+  prompt text NOT NULL   
+  response text NOT NULL   
+  model_used varchar(50) NULL   
+  tokens_used int NULL  DEFAULT 0 
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+
+Внешние ключи:
+  llm_interactions_ibfk_1: llm_interactions.task_id -> tasks.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  task_id : (task_id)
+
+SQL создания таблицы:
+CREATE TABLE `llm_interactions` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `task_id` int DEFAULT NULL,
+  `prompt` text NOT NULL,
+  `response` text NOT NULL,
+  `model_used` varchar(50) DEFAULT NULL,
+  `tokens_used` int DEFAULT '0',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `task_id` (`task_id`),
+  CONSTRAINT `llm_interactions_ibfk_1` FOREIGN KEY (`task_id`) REFERENCES `tasks` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: llm_token_usage
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  date date NOT NULL UNI  
+  prompt_tokens int NOT NULL   
+  completion_tokens int NOT NULL   
+  total_tokens int NOT NULL   
+  models_usage json NULL   
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+  updated_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  date UNIQUE: (date)
+
+SQL создания таблицы:
+CREATE TABLE `llm_token_usage` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `date` date NOT NULL,
+  `prompt_tokens` int NOT NULL,
+  `completion_tokens` int NOT NULL,
+  `total_tokens` int NOT NULL,
+  `models_usage` json DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `date` (`date`)
+) ENGINE=InnoDB AUTO_INCREMENT=13 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: notification_settings
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  user_id int NOT NULL UNI  
+  email_enabled tinyint(1) NULL  DEFAULT 1 
+  push_enabled tinyint(1) NULL  DEFAULT 1 
+  task_notifications tinyint(1) NULL  DEFAULT 1 
+  project_notifications tinyint(1) NULL  DEFAULT 1 
+  system_notifications tinyint(1) NULL  DEFAULT 1 
+  digest_frequency enum('never','daily','weekly') NULL  DEFAULT daily 
+  created_at datetime NOT NULL   
+  updated_at datetime NULL   
+
+Внешние ключи:
+  notification_settings_ibfk_1: notification_settings.user_id -> users.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  unique_user_settings UNIQUE: (user_id)
+
+SQL создания таблицы:
+CREATE TABLE `notification_settings` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id` int NOT NULL,
+  `email_enabled` tinyint(1) DEFAULT '1',
+  `push_enabled` tinyint(1) DEFAULT '1',
+  `task_notifications` tinyint(1) DEFAULT '1',
+  `project_notifications` tinyint(1) DEFAULT '1',
+  `system_notifications` tinyint(1) DEFAULT '1',
+  `digest_frequency` enum('never','daily','weekly') DEFAULT 'daily',
+  `created_at` datetime NOT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_user_settings` (`user_id`),
+  CONSTRAINT `notification_settings_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: notification_templates
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  type varchar(50) NOT NULL UNI  
+  subject varchar(255) NOT NULL   
+  template_text text NOT NULL   
+  template_html text NULL   
+  created_at datetime NOT NULL   
+  updated_at datetime NULL   
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  unique_template_type UNIQUE: (type)
+
+SQL создания таблицы:
+CREATE TABLE `notification_templates` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `type` varchar(50) NOT NULL,
+  `subject` varchar(255) NOT NULL,
+  `template_text` text NOT NULL,
+  `template_html` text,
+  `created_at` datetime NOT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_template_type` (`type`)
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: notifications
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  user_id int NULL MUL  
+  type varchar(50) NOT NULL MUL  
+  title varchar(255) NOT NULL   
+  message text NOT NULL   
+  data json NULL   
+  project_id int NULL MUL  
+  task_id int NULL MUL  
+  is_read tinyint(1) NULL MUL DEFAULT 0 
+  created_at datetime NOT NULL MUL  
+  updated_at datetime NULL   
+
+Внешние ключи:
+  notifications_ibfk_1: notifications.user_id -> users.id
+  notifications_ibfk_2: notifications.project_id -> projects.id
+  notifications_ibfk_3: notifications.task_id -> tasks.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  idx_notifications_user_id : (user_id)
+  idx_notifications_is_read : (is_read)
+  idx_notifications_type : (type)
+  idx_notifications_project_id : (project_id)
+  idx_notifications_task_id : (task_id)
+  idx_notifications_created_at : (created_at)
+
+SQL создания таблицы:
+CREATE TABLE `notifications` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id` int DEFAULT NULL,
+  `type` varchar(50) NOT NULL,
+  `title` varchar(255) NOT NULL,
+  `message` text NOT NULL,
+  `data` json DEFAULT NULL,
+  `project_id` int DEFAULT NULL,
+  `task_id` int DEFAULT NULL,
+  `is_read` tinyint(1) DEFAULT '0',
+  `created_at` datetime NOT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_notifications_user_id` (`user_id`),
+  KEY `idx_notifications_is_read` (`is_read`),
+  KEY `idx_notifications_type` (`type`),
+  KEY `idx_notifications_project_id` (`project_id`),
+  KEY `idx_notifications_task_id` (`task_id`),
+  KEY `idx_notifications_created_at` (`created_at`),
+  CONSTRAINT `notifications_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `notifications_ibfk_2` FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `notifications_ibfk_3` FOREIGN KEY (`task_id`) REFERENCES `tasks` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: project_files
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  project_id int NOT NULL MUL  
+  file_path varchar(255) NOT NULL MUL  
+  file_type varchar(50) NOT NULL   
+  file_hash varchar(64) NOT NULL   
+  last_analyzed timestamp NULL   
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+  updated_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP
+
+Внешние ключи:
+  project_files_ibfk_1: project_files.project_id -> projects.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  project_id : (project_id)
+  idx_project_files_path : (file_path)
+
+SQL создания таблицы:
+CREATE TABLE `project_files` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `project_id` int NOT NULL,
+  `file_path` varchar(255) NOT NULL,
+  `file_type` varchar(50) NOT NULL,
+  `file_hash` varchar(64) NOT NULL,
+  `last_analyzed` timestamp NULL DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `project_id` (`project_id`),
+  KEY `idx_project_files_path` (`file_path`),
+  CONSTRAINT `project_files_ibfk_1` FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: project_templates
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  name varchar(100) NOT NULL UNI  
+  description text NULL   
+  structure json NULL   
+  default_tasks json NULL   
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+  updated_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  unique_name UNIQUE: (name)
+
+SQL создания таблицы:
+CREATE TABLE `project_templates` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `name` varchar(100) NOT NULL,
+  `description` text,
+  `structure` json DEFAULT NULL,
+  `default_tasks` json DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_name` (`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: projects
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  name varchar(100) NOT NULL   
+  description text NULL   
+  status enum('active','inactive','archived') NULL  DEFAULT active 
+  repository_url varchar(255) NULL   
+  last_analyzed timestamp NULL   
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+  updated_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP
+  github_repo_connected tinyint(1) NULL  DEFAULT 0 
+  repository_path varchar(255) NULL   
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+
+SQL создания таблицы:
+CREATE TABLE `projects` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `name` varchar(100) NOT NULL,
+  `description` text,
+  `status` enum('active','inactive','archived') DEFAULT 'active',
+  `repository_url` varchar(255) DEFAULT NULL,
+  `last_analyzed` timestamp NULL DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `github_repo_connected` tinyint(1) DEFAULT '0',
+  `repository_path` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: schema_columns
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  table_id int NOT NULL MUL  
+  name varchar(100) NOT NULL   
+  type varchar(50) NOT NULL   
+  nullable tinyint(1) NULL  DEFAULT 0 
+  description text NULL   
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+  updated_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP
+
+Внешние ключи:
+  schema_columns_ibfk_1: schema_columns.table_id -> schema_tables.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  table_id : (table_id)
+
+SQL создания таблицы:
+CREATE TABLE `schema_columns` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `table_id` int NOT NULL,
+  `name` varchar(100) NOT NULL,
+  `type` varchar(50) NOT NULL,
+  `nullable` tinyint(1) DEFAULT '0',
+  `description` text,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `table_id` (`table_id`),
+  CONSTRAINT `schema_columns_ibfk_1` FOREIGN KEY (`table_id`) REFERENCES `schema_tables` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: schema_relations
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  source_table varchar(100) NOT NULL   
+  source_column varchar(100) NOT NULL   
+  target_table varchar(100) NOT NULL   
+  target_column varchar(100) NOT NULL   
+  on_delete varchar(20) NULL  DEFAULT RESTRICT 
+  on_update varchar(20) NULL  DEFAULT RESTRICT 
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+  updated_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+
+SQL создания таблицы:
+CREATE TABLE `schema_relations` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `source_table` varchar(100) NOT NULL,
+  `source_column` varchar(100) NOT NULL,
+  `target_table` varchar(100) NOT NULL,
+  `target_column` varchar(100) NOT NULL,
+  `on_delete` varchar(20) DEFAULT 'RESTRICT',
+  `on_update` varchar(20) DEFAULT 'RESTRICT',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: schema_tables
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  name varchar(100) NOT NULL   
+  structure json NOT NULL   
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+  updated_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+
+SQL создания таблицы:
+CREATE TABLE `schema_tables` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `name` varchar(100) NOT NULL,
+  `structure` json NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: subtask_comments
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  subtask_id int NOT NULL MUL  
+  user_id int NOT NULL MUL  
+  content text NOT NULL   
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+  updated_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP
+
+Внешние ключи:
+  subtask_comments_ibfk_1: subtask_comments.subtask_id -> subtasks.id
+  subtask_comments_ibfk_2: subtask_comments.user_id -> users.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  subtask_id : (subtask_id)
+  user_id : (user_id)
+
+SQL создания таблицы:
+CREATE TABLE `subtask_comments` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `subtask_id` int NOT NULL,
+  `user_id` int NOT NULL,
+  `content` text NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `subtask_id` (`subtask_id`),
+  KEY `user_id` (`user_id`),
+  CONSTRAINT `subtask_comments_ibfk_1` FOREIGN KEY (`subtask_id`) REFERENCES `subtasks` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `subtask_comments_ibfk_2` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Комментарии к подзадачам';
+
+==================================================
+
+ТАБЛИЦА: subtask_dependencies
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  subtask_id int NOT NULL MUL  
+  depends_on_subtask_id int NOT NULL MUL  
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+
+Внешние ключи:
+  subtask_dependencies_ibfk_1: subtask_dependencies.subtask_id -> subtasks.id
+  subtask_dependencies_ibfk_2: subtask_dependencies.depends_on_subtask_id -> subtasks.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  subtask_id UNIQUE: (subtask_id, depends_on_subtask_id)
+  depends_on_subtask_id : (depends_on_subtask_id)
+
+SQL создания таблицы:
+CREATE TABLE `subtask_dependencies` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `subtask_id` int NOT NULL,
+  `depends_on_subtask_id` int NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `subtask_id` (`subtask_id`,`depends_on_subtask_id`),
+  KEY `depends_on_subtask_id` (`depends_on_subtask_id`),
+  CONSTRAINT `subtask_dependencies_ibfk_1` FOREIGN KEY (`subtask_id`) REFERENCES `subtasks` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `subtask_dependencies_ibfk_2` FOREIGN KEY (`depends_on_subtask_id`) REFERENCES `subtasks` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Зависимости между подзадачами';
+
+==================================================
+
+ТАБЛИЦА: subtasks
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  task_id int NOT NULL MUL  
+  title varchar(255) NOT NULL   
+  description text NULL   
+  status enum('pending','in_progress','completed','failed') NULL MUL DEFAULT pending 
+  estimated_hours float NULL   
+  actual_hours float NULL   
+  sequence_number int NOT NULL   
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+  updated_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP
+  completed_at timestamp NULL   
+
+Внешние ключи:
+  subtasks_ibfk_1: subtasks.task_id -> tasks.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  idx_subtasks_task : (task_id)
+  idx_subtasks_status : (status)
+
+SQL создания таблицы:
+CREATE TABLE `subtasks` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `task_id` int NOT NULL,
+  `title` varchar(255) NOT NULL,
+  `description` text,
+  `status` enum('pending','in_progress','completed','failed') DEFAULT 'pending',
+  `estimated_hours` float DEFAULT NULL COMMENT 'Оценка времени выполнения в часах',
+  `actual_hours` float DEFAULT NULL COMMENT 'Фактически затраченное время в часах',
+  `sequence_number` int NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `completed_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_subtasks_task` (`task_id`),
+  KEY `idx_subtasks_status` (`status`),
+  CONSTRAINT `subtasks_ibfk_1` FOREIGN KEY (`task_id`) REFERENCES `tasks` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: task_comments
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  task_id int NOT NULL MUL  
+  user_id int NOT NULL MUL  
+  content text NOT NULL   
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+  updated_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP
+
+Внешние ключи:
+  task_comments_ibfk_1: task_comments.task_id -> tasks.id
+  task_comments_ibfk_2: task_comments.user_id -> users.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  task_id : (task_id)
+  user_id : (user_id)
+
+SQL создания таблицы:
+CREATE TABLE `task_comments` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `task_id` int NOT NULL,
+  `user_id` int NOT NULL,
+  `content` text NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `task_id` (`task_id`),
+  KEY `user_id` (`user_id`),
+  CONSTRAINT `task_comments_ibfk_1` FOREIGN KEY (`task_id`) REFERENCES `tasks` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `task_comments_ibfk_2` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Комментарии к задачам';
+
+==================================================
+
+ТАБЛИЦА: task_commits
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  task_id int NOT NULL MUL  
+  commit_hash varchar(40) NOT NULL   
+  message text NOT NULL   
+  created_at datetime NOT NULL   
+
+Внешние ключи:
+  task_commits_ibfk_1: task_commits.task_id -> tasks.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  task_id : (task_id)
+
+SQL создания таблицы:
+CREATE TABLE `task_commits` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `task_id` int NOT NULL,
+  `commit_hash` varchar(40) NOT NULL,
+  `message` text NOT NULL,
+  `created_at` datetime NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `task_id` (`task_id`),
+  CONSTRAINT `task_commits_ibfk_1` FOREIGN KEY (`task_id`) REFERENCES `tasks` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: task_filters
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  user_id int NOT NULL MUL  
+  name varchar(100) NOT NULL   
+  filter_data json NOT NULL   
+  is_default tinyint(1) NULL  DEFAULT 0 
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+  updated_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP
+
+Внешние ключи:
+  task_filters_ibfk_1: task_filters.user_id -> users.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  user_id UNIQUE: (user_id, name)
+
+SQL создания таблицы:
+CREATE TABLE `task_filters` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id` int NOT NULL,
+  `name` varchar(100) NOT NULL,
+  `filter_data` json NOT NULL COMMENT 'Параметры фильтра в формате JSON',
+  `is_default` tinyint(1) DEFAULT '0',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `user_id` (`user_id`,`name`),
+  CONSTRAINT `task_filters_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Пользовательские фильтры задач';
+
+==================================================
+
+ТАБЛИЦА: task_list_items
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  task_list_id int NOT NULL MUL  
+  task_id int NOT NULL MUL  
+  position int NULL  DEFAULT 0 
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+
+Внешние ключи:
+  task_list_items_ibfk_1: task_list_items.task_list_id -> task_lists.id
+  task_list_items_ibfk_2: task_list_items.task_id -> tasks.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  task_list_id UNIQUE: (task_list_id, task_id)
+  task_id : (task_id)
+
+SQL создания таблицы:
+CREATE TABLE `task_list_items` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `task_list_id` int NOT NULL,
+  `task_id` int NOT NULL,
+  `position` int DEFAULT '0',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `task_list_id` (`task_list_id`,`task_id`),
+  KEY `task_id` (`task_id`),
+  CONSTRAINT `task_list_items_ibfk_1` FOREIGN KEY (`task_list_id`) REFERENCES `task_lists` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `task_list_items_ibfk_2` FOREIGN KEY (`task_id`) REFERENCES `tasks` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Связь задач со списками';
+
+==================================================
+
+ТАБЛИЦА: task_lists
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  project_id int NOT NULL MUL  
+  name varchar(100) NOT NULL   
+  description text NULL   
+  type enum('backlog','sprint','custom') NULL  DEFAULT custom 
+  start_date date NULL   
+  end_date date NULL   
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+  updated_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP
+
+Внешние ключи:
+  task_lists_ibfk_1: task_lists.project_id -> projects.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  project_id UNIQUE: (project_id, name)
+
+SQL создания таблицы:
+CREATE TABLE `task_lists` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `project_id` int NOT NULL,
+  `name` varchar(100) NOT NULL,
+  `description` text,
+  `type` enum('backlog','sprint','custom') DEFAULT 'custom',
+  `start_date` date DEFAULT NULL,
+  `end_date` date DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `project_id` (`project_id`,`name`),
+  CONSTRAINT `task_lists_ibfk_1` FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Списки задач (бэклоги, спринты)';
+
+==================================================
+
+ТАБЛИЦА: task_logs
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  task_id int NOT NULL MUL  
+  log_type enum('info','warning','error','progress') NOT NULL MUL  
+  message text NOT NULL   
+  progress int NULL   
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  task_id : (task_id)
+  log_type : (log_type)
+
+SQL создания таблицы:
+CREATE TABLE `task_logs` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `task_id` int NOT NULL,
+  `log_type` enum('info','warning','error','progress') NOT NULL,
+  `message` text NOT NULL,
+  `progress` int DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `task_id` (`task_id`),
+  KEY `log_type` (`log_type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: task_meta
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  task_id int NOT NULL MUL  
+  meta_key varchar(255) NOT NULL MUL  
+  meta_value text NOT NULL   
+  created_at timestamp NOT NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+  updated_at timestamp NULL   on update CURRENT_TIMESTAMP
+
+Внешние ключи:
+  task_meta_ibfk_1: task_meta.task_id -> tasks.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  task_id UNIQUE: (task_id, meta_key)
+  meta_key : (meta_key)
+
+SQL создания таблицы:
+CREATE TABLE `task_meta` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `task_id` int NOT NULL,
+  `meta_key` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `meta_value` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `task_id` (`task_id`,`meta_key`),
+  KEY `meta_key` (`meta_key`),
+  CONSTRAINT `task_meta_ibfk_1` FOREIGN KEY (`task_id`) REFERENCES `tasks` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+==================================================
+
+ТАБЛИЦА: task_pull_requests
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  task_id int NOT NULL MUL  
+  pr_url varchar(255) NOT NULL   
+  title varchar(255) NOT NULL   
+  status enum('open','merged','closed') NULL  DEFAULT open 
+  created_at datetime NOT NULL   
+  updated_at datetime NULL   
+
+Внешние ключи:
+  task_pull_requests_ibfk_1: task_pull_requests.task_id -> tasks.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  task_id : (task_id)
+
+SQL создания таблицы:
+CREATE TABLE `task_pull_requests` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `task_id` int NOT NULL,
+  `pr_url` varchar(255) NOT NULL,
+  `title` varchar(255) NOT NULL,
+  `status` enum('open','merged','closed') DEFAULT 'open',
+  `created_at` datetime NOT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `task_id` (`task_id`),
+  CONSTRAINT `task_pull_requests_ibfk_1` FOREIGN KEY (`task_id`) REFERENCES `tasks` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: task_queue
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  user_id int NULL MUL  
+  type varchar(50) NOT NULL   
+  data json NOT NULL   
+  priority int NULL  DEFAULT 5 
+  status enum('pending','processing','completed','failed') NULL MUL DEFAULT pending 
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+  updated_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP
+  completed_at timestamp NULL   
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  idx_task_queue_status : (status, priority)
+  idx_status_priority : (status, priority)
+  idx_user_status : (user_id, status)
+
+SQL создания таблицы:
+CREATE TABLE `task_queue` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id` int DEFAULT NULL,
+  `type` varchar(50) NOT NULL,
+  `data` json NOT NULL,
+  `priority` int DEFAULT '5',
+  `status` enum('pending','processing','completed','failed') DEFAULT 'pending',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `completed_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_task_queue_status` (`status`,`priority`),
+  KEY `idx_status_priority` (`status`,`priority`),
+  KEY `idx_user_status` (`user_id`,`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: task_templates
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  user_id int NOT NULL MUL  
+  name varchar(100) NOT NULL   
+  description text NULL   
+  template_data json NOT NULL   
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+  updated_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP
+
+Внешние ключи:
+  task_templates_ibfk_1: task_templates.user_id -> users.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  user_id UNIQUE: (user_id, name)
+
+SQL создания таблицы:
+CREATE TABLE `task_templates` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id` int NOT NULL,
+  `name` varchar(100) NOT NULL,
+  `description` text,
+  `template_data` json NOT NULL COMMENT 'Шаблон задачи в формате JSON',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `user_id` (`user_id`,`name`),
+  CONSTRAINT `task_templates_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Пользовательские шаблоны задач';
+
+==================================================
+
+ТАБЛИЦА: tasks
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  project_id int NOT NULL MUL  
+  title varchar(255) NOT NULL   
+  description text NULL   
+  status enum('pending','in_progress','completed','failed') NULL MUL DEFAULT pending 
+  progress int NULL  DEFAULT 0 
+  priority varchar(20) NULL MUL DEFAULT medium 
+  estimated_hours decimal(8,2) NULL   
+  actual_hours float NULL   
+  due_date date NULL MUL  
+  parent_task_id int NULL MUL  
+  pull_request_number int NULL   
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+  updated_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP
+  completed_at timestamp NULL   
+  complexity decimal(3,1) NULL   
+  git_branch varchar(255) NULL   
+
+Внешние ключи:
+  tasks_ibfk_1: tasks.project_id -> projects.id
+  tasks_ibfk_2: tasks.parent_task_id -> tasks.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  parent_task_id : (parent_task_id)
+  idx_tasks_status : (status)
+  idx_tasks_priority : (priority)
+  idx_tasks_project_status : (project_id, status)
+  idx_tasks_due_date : (due_date)
+
+SQL создания таблицы:
+CREATE TABLE `tasks` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `project_id` int NOT NULL,
+  `title` varchar(255) NOT NULL,
+  `description` text,
+  `status` enum('pending','in_progress','completed','failed') DEFAULT 'pending',
+  `progress` int DEFAULT '0' COMMENT 'Процент выполнения задачи (0-100)',
+  `priority` varchar(20) DEFAULT 'medium',
+  `estimated_hours` decimal(8,2) DEFAULT NULL COMMENT 'Estimated hours to complete the task',
+  `actual_hours` float DEFAULT NULL COMMENT 'Фактически затраченное время в часах',
+  `due_date` date DEFAULT NULL COMMENT 'Крайний срок выполнения',
+  `parent_task_id` int DEFAULT NULL,
+  `pull_request_number` int DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `completed_at` timestamp NULL DEFAULT NULL,
+  `complexity` decimal(3,1) DEFAULT NULL COMMENT 'Complexity score from 1 to 10',
+  `git_branch` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `parent_task_id` (`parent_task_id`),
+  KEY `idx_tasks_status` (`status`),
+  KEY `idx_tasks_priority` (`priority`),
+  KEY `idx_tasks_project_status` (`project_id`,`status`),
+  KEY `idx_tasks_due_date` (`due_date`),
+  CONSTRAINT `tasks_ibfk_1` FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `tasks_ibfk_2` FOREIGN KEY (`parent_task_id`) REFERENCES `tasks` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: tests
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  code_generation_id int NOT NULL MUL  
+  test_name varchar(255) NOT NULL   
+  test_content text NOT NULL   
+  result enum('pending','passed','failed') NULL  DEFAULT pending 
+  output text NULL   
+  coverage json NULL   
+  execution_time int NULL  DEFAULT 0 
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+  updated_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP
+
+Внешние ключи:
+  tests_ibfk_1: tests.code_generation_id -> code_generations.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  code_generation_id : (code_generation_id)
+
+SQL создания таблицы:
+CREATE TABLE `tests` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `code_generation_id` int NOT NULL,
+  `test_name` varchar(255) NOT NULL,
+  `test_content` text NOT NULL,
+  `result` enum('pending','passed','failed') DEFAULT 'pending',
+  `output` text,
+  `coverage` json DEFAULT NULL,
+  `execution_time` int DEFAULT '0',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `code_generation_id` (`code_generation_id`),
+  CONSTRAINT `tests_ibfk_1` FOREIGN KEY (`code_generation_id`) REFERENCES `code_generations` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: time_entries
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  user_id int NOT NULL MUL  
+  task_id int NULL MUL  
+  subtask_id int NULL MUL  
+  description text NULL   
+  hours float NOT NULL   
+  started_at datetime NOT NULL   
+  ended_at datetime NOT NULL   
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+  updated_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP
+
+Внешние ключи:
+  time_entries_ibfk_1: time_entries.user_id -> users.id
+  time_entries_ibfk_2: time_entries.task_id -> tasks.id
+  time_entries_ibfk_3: time_entries.subtask_id -> subtasks.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  user_id : (user_id)
+  task_id : (task_id)
+  subtask_id : (subtask_id)
+
+SQL создания таблицы:
+CREATE TABLE `time_entries` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id` int NOT NULL,
+  `task_id` int DEFAULT NULL,
+  `subtask_id` int DEFAULT NULL,
+  `description` text,
+  `hours` float NOT NULL,
+  `started_at` datetime NOT NULL,
+  `ended_at` datetime NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `user_id` (`user_id`),
+  KEY `task_id` (`task_id`),
+  KEY `subtask_id` (`subtask_id`),
+  CONSTRAINT `time_entries_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `time_entries_ibfk_2` FOREIGN KEY (`task_id`) REFERENCES `tasks` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `time_entries_ibfk_3` FOREIGN KEY (`subtask_id`) REFERENCES `subtasks` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Записи о затраченном времени';
+
+==================================================
+
+ТАБЛИЦА: user_sessions
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  user_id int NOT NULL MUL  
+  token varchar(255) NOT NULL MUL  
+  ip_address varchar(50) NOT NULL   
+  user_agent varchar(255) NULL   
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+  expires_at timestamp NOT NULL   
+  revoked tinyint(1) NULL  DEFAULT 0 
+
+Внешние ключи:
+  user_sessions_ibfk_1: user_sessions.user_id -> users.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  idx_user_sessions_user_id : (user_id)
+  idx_user_sessions_token : (token)
+
+SQL создания таблицы:
+CREATE TABLE `user_sessions` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id` int NOT NULL,
+  `token` varchar(255) NOT NULL,
+  `ip_address` varchar(50) NOT NULL,
+  `user_agent` varchar(255) DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `expires_at` timestamp NOT NULL,
+  `revoked` tinyint(1) DEFAULT '0',
+  PRIMARY KEY (`id`),
+  KEY `idx_user_sessions_user_id` (`user_id`),
+  KEY `idx_user_sessions_token` (`token`),
+  CONSTRAINT `user_sessions_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: users
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL PRI  auto_increment
+  username varchar(50) NOT NULL UNI  
+  password varchar(255) NOT NULL   
+  email varchar(100) NOT NULL UNI  
+  role enum('user','manager','admin') NULL  DEFAULT user 
+  active tinyint(1) NULL  DEFAULT 1 
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED
+  updated_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP
+  last_login timestamp NULL   
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  username UNIQUE: (username)
+  email UNIQUE: (email)
+
+SQL создания таблицы:
+CREATE TABLE `users` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `username` varchar(50) NOT NULL,
+  `password` varchar(255) NOT NULL,
+  `email` varchar(100) NOT NULL,
+  `role` enum('user','manager','admin') DEFAULT 'user',
+  `active` tinyint(1) DEFAULT '1',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `last_login` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `username` (`username`),
+  UNIQUE KEY `email` (`email`)
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+

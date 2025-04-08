@@ -1,214 +1,243 @@
-// src/models/task.model.js
-
-const validationMiddleware = require('../api/middleware/validation');
-
 /**
- * Модель данных задачи с валидацией
+ * Модель задачи
  */
-class TaskModel {
-  /**
-   * Валидирует данные для создания новой задачи
-   * @param {Object} taskData - Данные задачи
-   * @returns {Object} - Результат валидации: { isValid: boolean, errors: string[] }
-   */
-  static validateCreate(taskData) {
-    // Комбинированный валидатор
-    const validator = validationMiddleware.combine([
-      // Проверка обязательных полей
-      validationMiddleware.required(['project_id', 'title', 'description']),
-      
-      // Валидация числовых полей
-      validationMiddleware.numeric({
-        'project_id': { min: 1 },
-        'parent_task_id': { min: 1 },
-        'assigned_to': { min: 1 }
-      }),
-      
-      // Валидация строковых полей
-      validationMiddleware.string({
-        'title': { minLength: 3, maxLength: 255 },
-        'description': { minLength: 10 }
-      }),
-      
-      // Валидация перечислений
-      validationMiddleware.enum({
-        'priority': ['critical', 'high', 'medium', 'low']
-      })
-    ]);
-    
-    return validator(taskData);
-  }
-  
-  /**
-   * Валидирует данные для обновления задачи
-   * @param {Object} taskData - Данные задачи
-   * @returns {Object} - Результат валидации: { isValid: boolean, errors: string[] }
-   */
-  static validateUpdate(taskData) {
-    // Проверяем, есть ли хотя бы одно поле для обновления
-    if (Object.keys(taskData).length === 0) {
-      return {
-        isValid: false,
-        errors: ['Необходимо указать хотя бы одно поле для обновления']
-      };
-    }
-    
-    // Комбинированный валидатор
-    const validator = validationMiddleware.combine([
-      // Валидация числовых полей
-      validationMiddleware.numeric({
-        'parent_task_id': { min: 1 },
-        'assigned_to': { min: 1 }
-      }),
-      
-      // Валидация строковых полей
-      validationMiddleware.string({
-        'title': { minLength: 3, maxLength: 255 },
-        'description': { minLength: 10 }
-      }),
-      
-      // Валидация перечислений
-      validationMiddleware.enum({
-        'priority': ['critical', 'high', 'medium', 'low'],
-        'status': ['pending', 'in_progress', 'blocked', 'completed', 'failed']
-      })
-    ]);
-    
-    return validator(taskData);
-  }
-  
-  /**
-   * Валидирует параметры для изменения статуса задачи
-   * @param {Object} statusData - Данные статуса
-   * @returns {Object} - Результат валидации: { isValid: boolean, errors: string[] }
-   */
-  static validateStatusChange(statusData) {
-    // Комбинированный валидатор
-    const validator = validationMiddleware.combine([
-      // Проверка обязательных полей
-      validationMiddleware.required(['status']),
-      
-      // Валидация перечислений
-      validationMiddleware.enum({
-        'status': ['pending', 'in_progress', 'blocked', 'completed', 'failed']
-      })
-    ]);
-    
-    return validator(statusData);
-  }
-  
-  /**
-   * Валидирует параметры для поиска/фильтрации задач
-   * @param {Object} queryParams - Параметры запроса
-   * @returns {Object} - Результат валидации: { isValid: boolean, errors: string[] }
-   */
-  static validateSearchQuery(queryParams) {
-    // Комбинированный валидатор
-    const validator = validationMiddleware.combine([
-      // Валидация числовых полей
-      validationMiddleware.numeric({
-        'page': { min: 1 },
-        'limit': { min: 1, max: 100 },
-        'project_id': { min: 1 },
-        'assignee': { min: 1 }
-      }),
-      
-      // Валидация перечислений
-      validationMiddleware.enum({
-        'sortOrder': ['asc', 'desc']
-      })
-    ]);
-    
-    return validator(queryParams);
-  }
-  
-  /**
-   * Валидирует параметры для назначения задачи
-   * @param {Object} assignmentData - Данные назначения
-   * @returns {Object} - Результат валидации: { isValid: boolean, errors: string[] }
-   */
-  static validateAssignment(assignmentData) {
-    // Проверка, что userId либо null, либо положительное число
-    if (assignmentData.userId !== null && 
-        (typeof assignmentData.userId !== 'number' || assignmentData.userId < 1)) {
-      return {
-        isValid: false,
-        errors: ['userId должен быть null или положительным числом']
-      };
-    }
-    
-    return {
-      isValid: true,
-      errors: []
-    };
-  }
-  
-  /**
-   * Преобразует объект задачи в формат для базы данных
-   * @param {Object} taskData - Данные задачи
-   * @returns {Object} - Данные для базы данных
-   */
-  static toDatabase(taskData) {
-    // Формируем объект с данными для вставки/обновления в БД
-    const dbData = {};
-    
-    // Копируем только допустимые поля
-    const allowedFields = [
-      'project_id', 'title', 'description', 'status', 
-      'priority', 'parent_task_id', 'assigned_to'
-    ];
-    
-    allowedFields.forEach(field => {
-      if (taskData[field] !== undefined) {
-        dbData[field] = taskData[field];
+module.exports = (sequelize, DataTypes) => {
+  const Task = sequelize.define('Task', {
+    id: {
+      type: DataTypes.INTEGER,
+      primaryKey: true,
+      autoIncrement: true
+    },
+    project_id: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      references: {
+        model: 'projects',
+        key: 'id'
       }
-    });
-    
-    return dbData;
-  }
-  
-  /**
-   * Нормализует параметры для поиска/фильтрации задач
-   * @param {Object} queryParams - Исходные параметры запроса
-   * @returns {Object} - Нормализованные параметры
-   */
-  static normalizeSearchQuery(queryParams) {
-    const normalized = {
-      page: parseInt(queryParams.page) || 1,
-      limit: parseInt(queryParams.limit) || 10,
-      sortBy: queryParams.sortBy || 'created_at',
-      sortOrder: (queryParams.sortOrder || 'desc').toLowerCase()
-    };
-    
-    // Добавляем числовые параметры, если они заданы
-    ['project_id', 'assignee', 'parent_task_id'].forEach(param => {
-      if (queryParams[param] !== undefined) {
-        if (queryParams[param] === 'null') {
-          normalized[param] = null;
-        } else {
-          normalized[param] = parseInt(queryParams[param]) || null;
+    },
+    title: {
+      type: DataTypes.STRING(255),
+      allowNull: false,
+      validate: {
+        notEmpty: true,
+        len: [1, 255]
+      }
+    },
+    description: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    status: {
+      type: DataTypes.ENUM('pending', 'in_progress', 'completed', 'failed'),
+      defaultValue: 'pending',
+      allowNull: false
+    },
+    progress: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
+      validate: {
+        min: 0,
+        max: 100
+      }
+    },
+    priority: {
+      type: DataTypes.STRING(20),
+      defaultValue: 'medium',
+      allowNull: false
+    },
+    estimated_hours: {
+      type: DataTypes.DECIMAL(8, 2),
+      allowNull: true
+    },
+    actual_hours: {
+      type: DataTypes.FLOAT,
+      allowNull: true
+    },
+    due_date: {
+      type: DataTypes.DATE,
+      allowNull: true
+    },
+    parent_task_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'tasks',
+        key: 'id'
+      }
+    },
+    assigned_to: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'users',
+        key: 'id'
+      }
+    },
+    pull_request_number: {
+      type: DataTypes.INTEGER,
+      allowNull: true
+    },
+    complexity: {
+      type: DataTypes.DECIMAL(3, 1),
+      allowNull: true,
+      validate: {
+        min: 1,
+        max: 10
+      }
+    },
+    git_branch: {
+      type: DataTypes.STRING(255),
+      allowNull: true
+    },
+    created_at: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW
+    },
+    updated_at: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW
+    },
+    completed_at: {
+      type: DataTypes.DATE,
+      allowNull: true
+    }
+  }, {
+    tableName: 'tasks',
+    timestamps: false, // Мы управляем полями created_at и updated_at вручную
+    hooks: {
+      beforeCreate: (task) => {
+        task.created_at = new Date();
+        task.updated_at = new Date();
+      },
+      beforeUpdate: (task) => {
+        task.updated_at = new Date();
+        
+        // Если задача завершена, устанавливаем дату завершения
+        if (task.changed('status') && task.status === 'completed' && !task.completed_at) {
+          task.completed_at = new Date();
         }
       }
+    }
+  });
+
+  /**
+   * Дополнительные методы задачи
+   */
+  
+  /**
+   * Обновляет прогресс задачи на основе выполненных подзадач
+   * @returns {Promise<void>}
+   */
+  Task.prototype.updateProgress = async function() {
+    const { Subtask } = require('./index');
+    
+    const subtasks = await Subtask.findAll({
+      where: { task_id: this.id }
     });
     
-    // Добавляем строковые параметры, если они заданы
-    ['status', 'priority', 'search', 'from_date', 'to_date'].forEach(param => {
-      if (queryParams[param]) {
-        normalized[param] = queryParams[param];
-      }
-    });
-    
-    // Обработка тегов
-    if (queryParams.tags) {
-      if (Array.isArray(queryParams.tags)) {
-        normalized.tags = queryParams.tags;
-      } else {
-        normalized.tags = queryParams.tags.split(',').map(tag => tag.trim());
-      }
+    if (subtasks.length === 0) {
+      return;
     }
     
-    return normalized;
-  }
-}
+    const completedSubtasks = subtasks.filter(subtask => subtask.status === 'completed').length;
+    const progress = Math.round((completedSubtasks / subtasks.length) * 100);
+    
+    await this.update({ progress });
+  };
 
-module.exports = TaskModel;
+  /**
+   * Получает все логи задачи
+   * @returns {Promise<Array>} Логи задачи
+   */
+  Task.prototype.getLogs = async function() {
+    const { TaskLog } = require('./index');
+    
+    return TaskLog.findAll({
+      where: { task_id: this.id },
+      order: [['created_at', 'DESC']]
+    });
+  };
+
+  /**
+   * Добавляет лог задачи
+   * @param {string} type - Тип лога (info, warning, error, progress)
+   * @param {string} message - Сообщение лога
+   * @param {number} progress - Прогресс задачи (опционально)
+   * @returns {Promise<Object>} Созданный лог
+   */
+  Task.prototype.log = async function(type, message, progress = null) {
+    const { TaskLog } = require('./index');
+    
+    const log = await TaskLog.create({
+      task_id: this.id,
+      log_type: type,
+      message,
+      progress
+    });
+    
+    // Если указан прогресс, обновляем его в задаче
+    if (progress !== null) {
+      await this.update({ progress });
+    }
+    
+    return log;
+  };
+
+  /**
+   * Изменяет статус задачи
+   * @param {string} status - Новый статус
+   * @param {string} message - Сообщение для лога (опционально)
+   * @returns {Promise<Task>} Обновленная задача
+   */
+  Task.prototype.changeStatus = async function(status, message = null) {
+    const oldStatus = this.status;
+    
+    if (oldStatus === status) {
+      return this;
+    }
+    
+    // Обновляем статус
+    await this.update({ status });
+    
+    // Добавляем лог, если указано сообщение
+    if (message) {
+      await this.log('info', message);
+    } else {
+      await this.log('info', `Статус изменен с "${oldStatus}" на "${status}"`);
+    }
+    
+    // Если задача завершена, устанавливаем дату завершения
+    if (status === 'completed' && !this.completed_at) {
+      await this.update({ completed_at: new Date() });
+    }
+    
+    return this;
+  };
+
+  /**
+   * Получает родительскую задачу
+   * @returns {Promise<Task|null>} Родительская задача или null
+   */
+  Task.prototype.getParent = async function() {
+    if (!this.parent_task_id) {
+      return null;
+    }
+    
+    return Task.findByPk(this.parent_task_id);
+  };
+
+  /**
+   * Получает дочерние задачи
+   * @returns {Promise<Array<Task>>} Массив дочерних задач
+   */
+  Task.prototype.getChildren = async function() {
+    return Task.findAll({
+      where: { parent_task_id: this.id }
+    });
+  };
+
+  return Task;
+};
