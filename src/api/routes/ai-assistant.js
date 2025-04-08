@@ -5,6 +5,10 @@ const router = express.Router();
 const controller = require('../../controller');
 const LearningSystem = require('../../core/learning-system');
 const logger = require('../../utils/logger');
+// Импортируем модули AI-ассистента
+const taskUnderstanding = require('../../core/task-understanding');
+const taskPlanner = require('../../core/task-planner');
+const taskProgressWs = require('../../websocket/task-progress');
 
 /**
  * @route   GET /api/ai-assistant/status
@@ -27,6 +31,315 @@ router.get('/status', async (req, res) => {
   } catch (error) {
     logger.error('Ошибка при получении статуса ИИ-ассистента:', error);
     res.status(500).json({ error: 'Ошибка сервера при получении статуса' });
+  }
+});
+
+/**
+ * @route   POST /api/ai-assistant/understand-task
+ * @desc    Проанализировать задачу и извлечь требования
+ * @access  Private
+ */
+router.post('/understand-task', async (req, res) => {
+  try {
+    const { taskId } = req.body;
+    
+    if (!taskId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'ID задачи (taskId) обязателен' 
+      });
+    }
+    
+    // Добавляем задачу в очередь на анализ
+    const taskQueueInstance = controller.taskQueue;
+    const task = await taskQueueInstance.addTask('analyze-task', { taskId }, 7);
+    
+    // Отвечаем сразу, не дожидаясь выполнения задачи
+    res.status(202).json({
+      success: true,
+      message: 'Задача поставлена в очередь на анализ',
+      taskId: task.id
+    });
+  } catch (error) {
+    logger.error('Ошибка при анализе задачи:', error);
+    res.status(500).json({ error: 'Ошибка сервера при анализе задачи' });
+  }
+});
+
+/**
+ * @route   GET /api/ai-assistant/task-analysis/:id
+ * @desc    Получить результаты анализа задачи
+ * @access  Private
+ */
+router.get('/task-analysis/:id', async (req, res) => {
+  try {
+    const taskId = req.params.id;
+    
+    if (!taskId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'ID задачи обязателен' 
+      });
+    }
+    
+    // Получаем результаты анализа из БД
+    const analysisResults = await taskUnderstanding.getTaskAnalysis(taskId);
+    
+    if (!analysisResults) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Результаты анализа не найдены. Возможно, задача еще не была проанализирована.' 
+      });
+    }
+    
+    return res.status(200).json({
+      success: true,
+      data: analysisResults
+    });
+  } catch (error) {
+    logger.error(`Ошибка при получении результатов анализа задачи ${req.params.id}:`, error);
+    return res.status(500).json({
+      success: false,
+      message: 'Внутренняя ошибка сервера',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * @route   POST /api/ai-assistant/analyze-requirements
+ * @desc    Анализировать список требований и определить зависимости между ними
+ * @access  Private
+ */
+router.post('/analyze-requirements', async (req, res) => {
+  try {
+    const { requirements } = req.body;
+    
+    if (!requirements || !Array.isArray(requirements) || requirements.length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Требуется непустой массив требований' 
+      });
+    }
+    
+    // Анализируем зависимости между требованиями
+    const requirementParser = require('../../core/task-understanding/requirement-parser');
+    const enrichedRequirements = await requirementParser.analyzeRequirementDependencies(requirements);
+    
+    return res.status(200).json({
+      success: true,
+      data: {
+        requirements: enrichedRequirements
+      }
+    });
+  } catch (error) {
+    logger.error('Ошибка при анализе требований:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Внутренняя ошибка сервера при анализе требований',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * @route   POST /api/ai-assistant/generate-plan
+ * @desc    Создать план выполнения задачи
+ * @access  Private
+ */
+router.post('/generate-plan', async (req, res) => {
+  try {
+    const { taskId } = req.body;
+    
+    if (!taskId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'ID задачи (taskId) обязателен' 
+      });
+    }
+    
+    // Проверяем, был ли выполнен анализ задачи
+    const analysisResults = await taskUnderstanding.getTaskAnalysis(taskId);
+    if (!analysisResults) {
+      // Добавляем задачу в очередь на анализ, если анализ еще не был выполнен
+      const taskQueueInstance = controller.taskQueue;
+      await taskQueueInstance.addTask('analyze-task', { taskId }, 8);
+      
+      return res.status(202).json({
+        success: true,
+        message: 'Сначала необходимо выполнить анализ задачи. Задача поставлена в очередь на анализ.',
+        status: 'analysis_pending'
+      });
+    }
+    
+    // Добавляем задачу в очередь на планирование
+    const taskQueueInstance = controller.taskQueue;
+    const task = await taskQueueInstance.addTask('generate-plan', { taskId }, 6);
+    
+    // Отвечаем сразу, не дожидаясь выполнения задачи
+    res.status(202).json({
+      success: true,
+      message: 'Задача поставлена в очередь на планирование',
+      taskId: task.id
+    });
+  } catch (error) {
+    logger.error('Ошибка при создании плана задачи:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Ошибка сервера при создании плана задачи' 
+    });
+  }
+});
+
+/**
+ * @route   GET /api/ai-assistant/task-plan/:id
+ * @desc    Получить план выполнения задачи
+ * @access  Private
+ */
+router.get('/task-plan/:id', async (req, res) => {
+  try {
+    const taskId = req.params.id;
+    
+    if (!taskId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'ID задачи обязателен' 
+      });
+    }
+    
+    // Получаем план из БД
+    const plan = await taskPlanner.getTaskPlan(taskId);
+    
+    if (!plan) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'План не найден. Возможно, задача еще не была спланирована.' 
+      });
+    }
+    
+    // Получаем подзадачи из БД
+    const subtasks = await taskPlanner.getSubtasks(taskId);
+    
+    return res.status(200).json({
+      success: true,
+      data: {
+        plan,
+        subtasks
+      }
+    });
+  } catch (error) {
+    logger.error(`Ошибка при получении плана задачи ${req.params.id}:`, error);
+    return res.status(500).json({
+      success: false,
+      message: 'Внутренняя ошибка сервера',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * @route   POST /api/ai-assistant/decompose-task
+ * @desc    Разбить задачу на подзадачи
+ * @access  Private
+ */
+router.post('/decompose-task', async (req, res) => {
+  try {
+    const { taskId } = req.body;
+    
+    if (!taskId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'ID задачи (taskId) обязателен' 
+      });
+    }
+    
+    // Проверяем, был ли создан план задачи
+    const plan = await taskPlanner.getTaskPlan(taskId);
+    if (!plan) {
+      // Проверяем, был ли выполнен анализ задачи
+      const analysisResults = await taskUnderstanding.getTaskAnalysis(taskId);
+      if (!analysisResults) {
+        // Добавляем задачу в очередь на анализ, если анализ еще не был выполнен
+        const taskQueueInstance = controller.taskQueue;
+        await taskQueueInstance.addTask('analyze-task', { taskId }, 8);
+        
+        return res.status(202).json({
+          success: true,
+          message: 'Сначала необходимо выполнить анализ и планирование задачи. Задача поставлена в очередь на анализ.',
+          status: 'analysis_pending'
+        });
+      }
+      
+      // Добавляем задачу в очередь на планирование, если план еще не был создан
+      const taskQueueInstance = controller.taskQueue;
+      await taskQueueInstance.addTask('generate-plan', { taskId }, 7);
+      
+      return res.status(202).json({
+        success: true,
+        message: 'Сначала необходимо выполнить планирование задачи. Задача поставлена в очередь на планирование.',
+        status: 'planning_pending'
+      });
+    }
+    
+    // Добавляем задачу в очередь на декомпозицию
+    const taskQueueInstance = controller.taskQueue;
+    const task = await taskQueueInstance.addTask('decompose-task', { taskId }, 5);
+    
+    // Отвечаем сразу, не дожидаясь выполнения задачи
+    res.status(202).json({
+      success: true,
+      message: 'Задача поставлена в очередь на декомпозицию',
+      taskId: task.id
+    });
+  } catch (error) {
+    logger.error('Ошибка при декомпозиции задачи:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Ошибка сервера при декомпозиции задачи' 
+    });
+  }
+});
+
+/**
+ * @route   POST /api/ai-assistant/process-task
+ * @desc    Автоматически обработать задачу (анализ, планирование, декомпозиция)
+ * @access  Private
+ */
+router.post('/process-task', async (req, res) => {
+  try {
+    const { taskId } = req.body;
+    
+    if (!taskId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Необходимо указать taskId' 
+      });
+    }
+    
+    // Добавляем задачу в очередь на анализ
+    const taskQueueInstance = controller.taskQueue;
+    await taskQueueInstance.addTask('analyze-task', { taskId }, 8);
+    
+    // Добавляем задачу в очередь на планирование (будет выполнена после анализа)
+    await taskQueueInstance.addTask('generate-plan', { taskId }, 7);
+    
+    // Добавляем задачу в очередь на декомпозицию (будет выполнена после планирования)
+    await taskQueueInstance.addTask('decompose-task', { taskId }, 6);
+    
+    // Обновляем статус задачи
+    await taskProgressWs.updateTaskStatus(taskId, 'in_progress', 'Начата автоматическая обработка задачи');
+    
+    res.status(202).json({
+      success: true,
+      message: 'Задача поставлена в очередь на полную обработку (анализ, планирование, декомпозиция)',
+      taskId
+    });
+  } catch (error) {
+    logger.error(`Ошибка при обработке задачи #${req.body.taskId}:`, error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Ошибка сервера при обработке задачи' 
+    });
   }
 });
 
@@ -56,29 +369,6 @@ router.post('/analyze-task', async (req, res) => {
   } catch (error) {
     logger.error('Ошибка при анализе задачи:', error);
     res.status(500).json({ error: 'Ошибка сервера при анализе задачи' });
-  }
-});
-
-/**
- * @route   POST /api/ai-assistant/process-task
- * @desc    Автоматически обработать задачу (декомпозиция, генерация кода, создание PR)
- * @access  Private
- */
-router.post('/process-task', async (req, res) => {
-  try {
-    const { taskId } = req.body;
-    
-    if (!taskId) {
-      return res.status(400).json({ error: 'Необходимо указать taskId' });
-    }
-    
-    // Отправляем задачу на обработку контроллеру
-    const result = await controller.handleTaskRequest(taskId);
-    
-    res.json(result);
-  } catch (error) {
-    logger.error(`Ошибка при обработке задачи #${req.body.taskId}:`, error);
-    res.status(500).json({ error: 'Ошибка сервера при обработке задачи' });
   }
 });
 

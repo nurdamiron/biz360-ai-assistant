@@ -1,343 +1,355 @@
-// src/core/task-planner/index.js
+/**
+ * Модуль планирования задач
+ * 
+ * Отвечает за создание структурированного плана выполнения задачи,
+ * разбиение сложных задач на этапы, оценку времени и ресурсов.
+ */
 
-const { getLLMClient } = require('../../utils/llm-client');
-const logger = require('../../utils/logger');
 const { pool } = require('../../config/db.config');
-const TaskDecomposer = require('./decomposer');
-const TaskPrioritizer = require('./prioritizer');
+const logger = require('../../utils/logger');
+const llmClient = require('../../utils/llm-client');
+const taskUnderstanding = require('../task-understanding');
+const decomposer = require('./decomposer');
+const planGenerator = require('./plan-generator');
+const taskProgressWs = require('../../websocket/task-progress');
 
 /**
- * Класс для планирования и декомпозиции задач
+ * Создает план выполнения задачи
+ * 
+ * @param {number} taskId - ID задачи
+ * @param {Object} options - Дополнительные опции
+ * @returns {Promise<Object>} Созданный план
  */
-class TaskPlanner {
-  constructor(projectId) {
-    this.projectId = projectId;
-    this.llmClient = getLLMClient();
-    this.decomposer = new TaskDecomposer(projectId);
-    this.prioritizer = new TaskPrioritizer();
-  }
-
-  /**
-   * Получает информацию о задаче
-   * @param {number} taskId - ID задачи
-   * @returns {Promise<Object>} - Информация о задаче
-   */
-  async getTaskInfo(taskId) {
-    try {
-      const connection = await pool.getConnection();
-      
-      const [tasks] = await connection.query(
-        'SELECT * FROM tasks WHERE id = ? AND project_id = ?',
-        [taskId, this.projectId]
-      );
-      
-      connection.release();
-      
-      if (tasks.length === 0) {
-        throw new Error(`Задача с id=${taskId} не найдена`);
-      }
-      
-      return tasks[0];
-    } catch (error) {
-      logger.error('Ошибка при получении информации о задаче:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Декомпозирует высокоуровневую задачу на подзадачи
-   * @param {number} taskId - ID высокоуровневой задачи
-   * @returns {Promise<Array>} - Массив созданных подзадач
-   */
-  async decomposeTask(taskId) {
-    try {
-      logger.info(`Начинаем декомпозицию задачи #${taskId}`);
-      
-      // Получаем информацию о задаче
-      const task = await this.getTaskInfo(taskId);
-      
-      // Проверяем статус задачи
-      if (task.status !== 'pending') {
-        throw new Error(`Невозможно декомпозировать задачу со статусом "${task.status}"`);
-      }
-      
-      // Декомпозируем задачу на подзадачи
-      const subtasks = await this.decomposer.decompose(task);
-      
-      if (!subtasks || subtasks.length === 0) {
-        throw new Error('Не удалось декомпозировать задачу на подзадачи');
-      }
-      
-      // Сохраняем подзадачи в БД
-      const savedSubtasks = await this.saveSubtasks(taskId, subtasks);
-      
-      // Обновляем статус основной задачи
-      await this.updateTaskStatus(taskId, 'in_progress');
-      
-      logger.info(`Задача #${taskId} успешно декомпозирована на ${savedSubtasks.length} подзадач`);
-      
-      return savedSubtasks;
-    } catch (error) {
-      logger.error(`Ошибка при декомпозиции задачи #${taskId}:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Сохраняет подзадачи в базе данных
-   * @param {number} parentTaskId - ID родительской задачи
-   * @param {Array} subtasks - Массив подзадач для сохранения
-   * @returns {Promise<Array>} - Массив сохраненных подзадач с ID
-   */
-  async saveSubtasks(parentTaskId, subtasks) {
+async function createTaskPlan(taskId, options = {}) {
+  try {
+    logger.info(`Создание плана для задачи ${taskId}`);
+    await taskProgressWs.startTaskStage(taskId, 'planning', 0, 'Начато планирование задачи');
+    
+    // Получаем информацию о задаче
     const connection = await pool.getConnection();
+    let task;
     
     try {
-      await connection.beginTransaction();
-      
-      const savedSubtasks = [];
-      
-      // Сохраняем каждую подзадачу
-      for (let i = 0; i < subtasks.length; i++) {
-        const subtask = subtasks[i];
-        
-        const [result] = await connection.query(
-          `INSERT INTO subtasks 
-           (task_id, title, description, status, sequence_number) 
-           VALUES (?, ?, ?, ?, ?)`,
-          [parentTaskId, subtask.title, subtask.description, 'pending', i + 1]
-        );
-        
-        savedSubtasks.push({
-          id: result.insertId,
-          task_id: parentTaskId,
-          title: subtask.title,
-          description: subtask.description,
-          status: 'pending',
-          sequence_number: i + 1
-        });
+      const [tasks] = await connection.query('SELECT * FROM tasks WHERE id = ?', [taskId]);
+      if (tasks.length === 0) {
+        throw new Error(`Задача с ID ${taskId} не найдена`);
       }
-      
-      await connection.commit();
-      
-      return savedSubtasks;
-    } catch (error) {
-      await connection.rollback();
-      logger.error('Ошибка при сохранении подзадач:', error);
-      throw error;
+      task = tasks[0];
     } finally {
       connection.release();
     }
-  }
-
-  /**
-   * Обновляет статус задачи
-   * @param {number} taskId - ID задачи
-   * @param {string} status - Новый статус
-   * @returns {Promise<void>}
-   */
-  async updateTaskStatus(taskId, status) {
-    try {
-      const connection = await pool.getConnection();
+    
+    // Получаем результаты анализа задачи
+    const analysis = await taskUnderstanding.getTaskAnalysis(taskId);
+    if (!analysis) {
+      // Если анализ не найден, запускаем его
+      logger.info(`Анализ для задачи ${taskId} не найден, запускаем анализ`);
+      await taskProgressWs.sendTaskLog(taskId, 'info', 'Анализ задачи не найден, запускаем анализ');
       
-      await connection.query(
-        'UPDATE tasks SET status = ?, updated_at = NOW() WHERE id = ?',
-        [status, taskId]
-      );
-      
-      if (status === 'completed') {
-        await connection.query(
-          'UPDATE tasks SET completed_at = NOW() WHERE id = ?',
-          [taskId]
-        );
-      }
-      
-      connection.release();
-      
-      logger.info(`Статус задачи #${taskId} обновлен на "${status}"`);
-    } catch (error) {
-      logger.error(`Ошибка при обновлении статуса задачи #${taskId}:`, error);
-      throw error;
+      // Анализируем задачу
+      const analysisResult = await taskUnderstanding.analyzeTask(task);
+      await taskProgressWs.updateTaskStageProgress(taskId, 30, 'Анализ задачи завершен');
+    } else {
+      await taskProgressWs.updateTaskStageProgress(taskId, 30, 'Получены результаты предыдущего анализа задачи');
     }
-  }
-
-  /**
-   * Получает список всех подзадач для задачи
-   * @param {number} taskId - ID родительской задачи
-   * @returns {Promise<Array>} - Список подзадач
-   */
-  async getSubtasks(taskId) {
-    try {
-      const connection = await pool.getConnection();
-      
-      const [subtasks] = await connection.query(
-        'SELECT * FROM subtasks WHERE task_id = ? ORDER BY sequence_number',
-        [taskId]
-      );
-      
-      connection.release();
-      
-      return subtasks;
-    } catch (error) {
-      logger.error(`Ошибка при получении подзадач для задачи #${taskId}:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Получает следующую подзадачу для выполнения
-   * @param {number} taskId - ID родительской задачи
-   * @returns {Promise<Object|null>} - Следующая подзадача или null, если все выполнены
-   */
-  async getNextSubtask(taskId) {
-    try {
-      const connection = await pool.getConnection();
-      
-      const [subtasks] = await connection.query(
-        'SELECT * FROM subtasks WHERE task_id = ? AND status = "pending" ORDER BY sequence_number LIMIT 1',
-        [taskId]
-      );
-      
-      connection.release();
-      
-      return subtasks.length > 0 ? subtasks[0] : null;
-    } catch (error) {
-      logger.error(`Ошибка при получении следующей подзадачи для задачи #${taskId}:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Обновляет статус подзадачи
-   * @param {number} subtaskId - ID подзадачи
-   * @param {string} status - Новый статус
-   * @returns {Promise<void>}
-   */
-  async updateSubtaskStatus(subtaskId, status) {
-    try {
-      const connection = await pool.getConnection();
-      
-      await connection.query(
-        'UPDATE subtasks SET status = ?, updated_at = NOW() WHERE id = ?',
-        [status, subtaskId]
-      );
-      
-      if (status === 'completed') {
-        await connection.query(
-          'UPDATE subtasks SET completed_at = NOW() WHERE id = ?',
-          [subtaskId]
-        );
-        
-        // Проверяем, все ли подзадачи выполнены
-        const [subtask] = await connection.query(
-          'SELECT task_id FROM subtasks WHERE id = ?',
-          [subtaskId]
-        );
-        
-        if (subtask.length > 0) {
-          const taskId = subtask[0].task_id;
-          
-          const [pendingSubtasks] = await connection.query(
-            'SELECT COUNT(*) as count FROM subtasks WHERE task_id = ? AND status != "completed"',
-            [taskId]
-          );
-          
-          // Если все подзадачи выполнены, обновляем статус родительской задачи
-          if (pendingSubtasks[0].count === 0) {
-            await this.updateTaskStatus(taskId, 'completed');
-          }
-        }
-      }
-      
-      connection.release();
-      
-      logger.info(`Статус подзадачи #${subtaskId} обновлен на "${status}"`);
-    } catch (error) {
-      logger.error(`Ошибка при обновлении статуса подзадачи #${subtaskId}:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Получает список задач с высоким приоритетом для выполнения
-   * @param {number} limit - Максимальное количество задач
-   * @returns {Promise<Array>} - Список приоритетных задач
-   */
-  async getPriorityTasks(limit = 5) {
-    try {
-      const connection = await pool.getConnection();
-      
-      // Получаем все активные задачи
-      const [tasks] = await connection.query(
-        `SELECT * FROM tasks 
-         WHERE project_id = ? AND status IN ('pending', 'in_progress') 
-         ORDER BY priority DESC, created_at ASC`,
-        [this.projectId]
-      );
-      
-      connection.release();
-      
-      // Если задач нет, возвращаем пустой массив
-      if (tasks.length === 0) {
-        return [];
-      }
-      
-      // Приоритизируем задачи с учетом различных факторов
-      const prioritizedTasks = await this.prioritizer.prioritize(tasks);
-      
-      // Возвращаем ограниченное количество задач
-      return prioritizedTasks.slice(0, limit);
-    } catch (error) {
-      logger.error('Ошибка при получении приоритетных задач:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Создает новую задачу
-   * @param {Object} taskData - Данные для создания задачи
-   * @returns {Promise<Object>} - Созданная задача
-   */
-  async createTask(taskData) {
-    try {
-      // Проверяем обязательные поля
-      if (!taskData.title || !taskData.description) {
-        throw new Error('Необходимо указать заголовок и описание задачи');
-      }
-      
-      const connection = await pool.getConnection();
-      
-      // Вставляем задачу в БД
-      const [result] = await connection.query(
-        `INSERT INTO tasks 
-         (project_id, title, description, status, priority, parent_task_id) 
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [
-          this.projectId,
-          taskData.title,
-          taskData.description,
-          taskData.status || 'pending',
-          taskData.priority || 'medium',
-          taskData.parent_task_id || null
-        ]
-      );
-      
-      // Получаем созданную задачу
-      const [tasks] = await connection.query(
-        'SELECT * FROM tasks WHERE id = ?',
-        [result.insertId]
-      );
-      
-      connection.release();
-      
-      logger.info(`Создана новая задача #${result.insertId}: ${taskData.title}`);
-      
-      return tasks[0];
-    } catch (error) {
-      logger.error('Ошибка при создании задачи:', error);
-      throw error;
-    }
+    
+    // Создаем план выполнения задачи
+    const plan = await planGenerator.generatePlan(taskId, options);
+    await taskProgressWs.updateTaskStageProgress(taskId, 70, 'План задачи сформирован');
+    
+    // Выполняем декомпозицию задачи на подзадачи
+    const decomposedTasks = await decomposer.decomposeTask(taskId, plan);
+    await taskProgressWs.updateTaskStageProgress(taskId, 90, 'Задача декомпозирована на подзадачи');
+    
+    // Сохраняем план в БД
+    await savePlanToDatabase(taskId, plan, decomposedTasks);
+    
+    await taskProgressWs.completeTaskStage(taskId, true, 'Планирование задачи успешно завершено');
+    return {
+      taskId,
+      plan,
+      subtasks: decomposedTasks
+    };
+  } catch (error) {
+    logger.error(`Ошибка при создании плана для задачи ${taskId}:`, error);
+    await taskProgressWs.sendTaskLog(taskId, 'error', `Ошибка при планировании: ${error.message}`);
+    await taskProgressWs.completeTaskStage(taskId, false, `Ошибка при планировании: ${error.message}`);
+    throw error;
   }
 }
 
-module.exports = TaskPlanner;
+/**
+ * Сохраняет план выполнения задачи в БД
+ * 
+ * @param {number} taskId - ID задачи
+ * @param {Object} plan - План выполнения
+ * @param {Array} subtasks - Декомпозированные подзадачи
+ * @returns {Promise<void>}
+ */
+async function savePlanToDatabase(taskId, plan, subtasks) {
+  const connection = await pool.getConnection();
+  
+  try {
+    // Начинаем транзакцию
+    await connection.beginTransaction();
+    
+    try {
+      // Сохраняем план в task_meta
+      const [existingMeta] = await connection.query(`
+        SELECT id FROM task_meta 
+        WHERE task_id = ? AND meta_key = 'task_plan'
+      `, [taskId]);
+      
+      if (existingMeta.length > 0) {
+        await connection.query(`
+          UPDATE task_meta 
+          SET meta_value = ?, updated_at = NOW() 
+          WHERE task_id = ? AND meta_key = 'task_plan'
+        `, [JSON.stringify(plan), taskId]);
+      } else {
+        await connection.query(`
+          INSERT INTO task_meta (task_id, meta_key, meta_value, created_at) 
+          VALUES (?, 'task_plan', ?, NOW())
+        `, [taskId, JSON.stringify(plan)]);
+      }
+      
+      // Сохраняем подзадачи в таблицу subtasks
+      for (const subtask of subtasks) {
+        await connection.query(`
+          INSERT INTO subtasks (
+            task_id, title, description, status, 
+            estimated_hours, sequence_number, created_at
+          ) VALUES (
+            ?, ?, ?, 'pending', ?, ?, NOW()
+          )
+        `, [
+          taskId,
+          subtask.title,
+          subtask.description,
+          subtask.estimatedHours || null,
+          subtask.sequenceNumber
+        ]);
+      }
+      
+      // Обновляем статус основной задачи
+      await connection.query(`
+        UPDATE tasks 
+        SET status = 'in_progress', 
+            progress = 15,
+            updated_at = NOW() 
+        WHERE id = ?
+      `, [taskId]);
+      
+      // Завершаем транзакцию
+      await connection.commit();
+    } catch (error) {
+      // Откатываем транзакцию в случае ошибки
+      await connection.rollback();
+      throw error;
+    }
+  } finally {
+    connection.release();
+  }
+}
+
+/**
+ * Получает план выполнения задачи из БД
+ * 
+ * @param {number} taskId - ID задачи
+ * @returns {Promise<Object|null>} План выполнения или null, если план не найден
+ */
+async function getTaskPlan(taskId) {
+  try {
+    const connection = await pool.getConnection();
+    
+    try {
+      const [metaRecords] = await connection.query(`
+        SELECT meta_value FROM task_meta 
+        WHERE task_id = ? AND meta_key = 'task_plan'
+      `, [taskId]);
+      
+      if (metaRecords.length === 0) {
+        return null;
+      }
+      
+      return JSON.parse(metaRecords[0].meta_value);
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    logger.error(`Ошибка при получении плана задачи ${taskId}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Получает подзадачи для задачи
+ * 
+ * @param {number} taskId - ID задачи
+ * @returns {Promise<Array>} Массив подзадач
+ */
+async function getSubtasks(taskId) {
+  try {
+    const connection = await pool.getConnection();
+    
+    try {
+      const [subtasks] = await connection.query(`
+        SELECT * FROM subtasks 
+        WHERE task_id = ? 
+        ORDER BY sequence_number ASC
+      `, [taskId]);
+      
+      return subtasks;
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    logger.error(`Ошибка при получении подзадач для задачи ${taskId}:`, error);
+    return [];
+  }
+}
+
+/**
+ * Обновляет план выполнения задачи
+ * 
+ * @param {number} taskId - ID задачи
+ * @param {Object} updatedPlan - Обновленный план
+ * @returns {Promise<boolean>} Результат операции
+ */
+async function updateTaskPlan(taskId, updatedPlan) {
+  try {
+    const connection = await pool.getConnection();
+    
+    try {
+      const [existingMeta] = await connection.query(`
+        SELECT id FROM task_meta 
+        WHERE task_id = ? AND meta_key = 'task_plan'
+      `, [taskId]);
+      
+      if (existingMeta.length > 0) {
+        await connection.query(`
+          UPDATE task_meta 
+          SET meta_value = ?, updated_at = NOW() 
+          WHERE task_id = ? AND meta_key = 'task_plan'
+        `, [JSON.stringify(updatedPlan), taskId]);
+      } else {
+        await connection.query(`
+          INSERT INTO task_meta (task_id, meta_key, meta_value, created_at) 
+          VALUES (?, 'task_plan', ?, NOW())
+        `, [taskId, JSON.stringify(updatedPlan)]);
+      }
+      
+      return true;
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    logger.error(`Ошибка при обновлении плана задачи ${taskId}:`, error);
+    return false;
+  }
+}
+
+/**
+ * Оценивает задачу по времени и сложности
+ * 
+ * @param {number} taskId - ID задачи
+ * @returns {Promise<Object>} Результат оценки
+ */
+async function estimateTask(taskId) {
+  try {
+    // Получаем информацию о задаче
+    const connection = await pool.getConnection();
+    let task;
+    
+    try {
+      const [tasks] = await connection.query('SELECT * FROM tasks WHERE id = ?', [taskId]);
+      if (tasks.length === 0) {
+        throw new Error(`Задача с ID ${taskId} не найдена`);
+      }
+      task = tasks[0];
+    } finally {
+      connection.release();
+    }
+    
+    // Получаем результаты анализа задачи
+    const analysis = await taskUnderstanding.getTaskAnalysis(taskId);
+    if (!analysis) {
+      throw new Error(`Анализ для задачи ${taskId} не найден`);
+    }
+    
+    // Формируем промпт для оценки задачи
+    const prompt = `
+    Ты - опытный руководитель проектов, специализирующийся на оценке задач разработки.
+    Оцени следующую задачу по времени и сложности:
+    
+    Название: ${task.title}
+    Описание: ${task.description}
+    
+    Требования:
+    ${analysis.requirements.map((req, i) => `${i+1}. ${req.description} (Приоритет: ${req.priority}, Тип: ${req.type})`).join('\n')}
+    
+    Тип задачи: ${analysis.type}
+    Категория: ${analysis.category}
+    
+    Предоставь следующую информацию:
+    1. Оценка времени в часах (минимальная, ожидаемая, максимальная)
+    2. Факторы, влияющие на оценку
+    3. Потенциальные риски
+    4. Рекомендации по выполнению
+    
+    Ответь в формате JSON:
+    {
+      "time_estimate": {
+        "min_hours": число,
+        "expected_hours": число,
+        "max_hours": число
+      },
+      "factors": ["фактор 1", "фактор 2", ...],
+      "risks": ["риск 1", "риск 2", ...],
+      "recommendations": ["рекомендация 1", "рекомендация 2", ...]
+    }
+    `;
+    
+    // Отправляем запрос к LLM
+    const response = await llmClient.sendPrompt(prompt, {
+      taskId,
+      temperature: 0.2
+    });
+    
+    // Извлекаем JSON из ответа
+    const jsonMatch = response.match(/({[\s\S]*})/);
+    if (!jsonMatch) {
+      throw new Error('Не удалось получить структурированный ответ от LLM');
+    }
+    
+    const estimation = JSON.parse(jsonMatch[0]);
+    
+    // Обновляем оценку времени выполнения задачи в БД
+    const connection2 = await pool.getConnection();
+    try {
+      await connection2.query(`
+        UPDATE tasks 
+        SET estimated_hours = ?
+        WHERE id = ?
+      `, [estimation.time_estimate.expected_hours, taskId]);
+    } finally {
+      connection2.release();
+    }
+    
+    return {
+      taskId,
+      ...estimation
+    };
+  } catch (error) {
+    logger.error(`Ошибка при оценке задачи ${taskId}:`, error);
+    throw error;
+  }
+}
+
+module.exports = {
+  createTaskPlan,
+  getTaskPlan,
+  getSubtasks,
+  updateTaskPlan,
+  estimateTask
+};
