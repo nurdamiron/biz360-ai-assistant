@@ -11,7 +11,7 @@ const taskRoutes = require('./routes/task');  // Новые маршруты з�
 const aiAssistantRoutes = require('./routes/ai-assistant');  // Маршруты AI-ассистента
 const monitoringRoutes = require('./routes/monitoring');  // Маршруты мониторинга
 const logsRoutes = require('./routes/logs');  // Маршруты логов
-const projectsRoutes = require('./routes/projects');  // Маршруты проектов
+const projectsRouter = require('./routes/projects');
 const timeEntriesRoutes = require('./routes/time-entries'); // Маршруты учета времени
 const commentsRoutes = require('./routes/comments'); // Маршруты комментариев
 const codeReviewRoutes = require('./routes/code-review'); // Маршруты проверки кода
@@ -56,7 +56,7 @@ router.use('/task', taskRoutes);  // Новые маршруты задач
 router.use('/ai-assistant', aiAssistantRoutes);
 router.use('/monitoring', monitoringRoutes);
 router.use('/logs', logsRoutes);
-router.use('/projects', projectsRoutes);
+router.use('/projects', projectsRouter);
 router.use('/time-entries', timeEntriesRoutes);
 router.use('/comments', commentsRoutes);
 router.use('/code-review', codeReviewRoutes);
@@ -83,8 +83,11 @@ router.use('*', (req, res) => {
  * @returns {Object} - Инициализированный маршрутизатор.
  */
 const initApi = (app, options = {}) => {
-  // Инициализируем маршруты оркестрации
-  initOrchestrationRoutes(options.orchestration || {});
+  // Инициализируем маршруты оркестрации и получаем маршрутизатор
+  const initializedOrchestrationRouter = initOrchestrationRoutes(options.orchestration || {});
+  
+  // Используем инициализированный маршрутизатор вместо предварительно импортированного
+  router.use('/orchestration', initializedOrchestrationRouter);
   
   // Добавляем маршрут состояния системы
   router.get('/status', async (req, res) => {

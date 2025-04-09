@@ -40,6 +40,7 @@ function getHostingApiClient(repositoryUrl) {
  * Контроллер для Git-интеграции (рефакторинг)
  */
 const gitController = {
+  // Существующие методы
   /**
    * Инициализирует Git репозиторий для проекта
    */
@@ -431,6 +432,474 @@ const gitController = {
       res.status(500).json({ error: `Ошибка сервера при получении git-статуса: ${error.message}` });
     } finally {
        if (connection) connection.release();
+    }
+  },
+
+  // Новые методы, необходимые для работы с вашими маршрутами
+
+  /**
+   * Клонирует репозиторий
+   * @param {Object} req - Express request объект
+   * @param {Object} res - Express response объект
+   * @returns {Object} JSON ответ
+   */
+  async cloneRepository(req, res) {
+    try {
+      const { repositoryUrl, branch, destination } = req.body;
+      
+      // Вызываем существующую логику инициализации репозитория
+      // Адаптируем запрос для совместимости с initializeRepository
+      req.params = { projectId: req.body.projectId || 'temp' };
+      req.body = { repositoryUrl, localPath: destination };
+      
+      return await gitController.initializeRepository(req, res);
+    } catch (error) {
+      logger.error('Error cloning repository:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to clone repository',
+        details: error.message
+      });
+    }
+  },
+
+  /**
+   * Выполняет git pull
+   * @param {Object} req - Express request объект
+   * @param {Object} res - Express response объект
+   * @returns {Object} JSON ответ
+   */
+  async pullRepository(req, res) {
+    try {
+      const { projectId, branch } = req.body;
+      
+      // Получаем путь к репозиторию
+      let connection;
+      try {
+        connection = await pool.getConnection();
+        const [projects] = await connection.query('SELECT repository_path FROM projects WHERE id = ?', [projectId]);
+        
+        if (projects.length === 0) {
+          return res.status(404).json({ error: 'Проект не найден' });
+        }
+        
+        const repoPath = projects[0].repository_path;
+        if (!repoPath) {
+          return res.status(400).json({ error: 'Репозиторий проекта не инициализирован' });
+        }
+        
+        // Используем GitService
+        const gitService = new GitService(repoPath);
+        
+        // Выполняем git pull
+        if (branch) {
+          await gitService.checkout(branch);
+        }
+        
+        const pullResult = await gitService.pull('origin', branch || 'main');
+        
+        logger.info(`Repository pulled for project #${projectId}: ${pullResult}`);
+        
+        return res.status(200).json({
+          success: true,
+          message: 'Repository pulled successfully',
+          data: { projectId, branch, result: pullResult }
+        });
+      } finally {
+        if (connection) connection.release();
+      }
+    } catch (error) {
+      logger.error('Error pulling repository:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to pull repository',
+        details: error.message
+      });
+    }
+  },
+
+  /**
+   * Создает новую ветку
+   * @param {Object} req - Express request объект
+   * @param {Object} res - Express response объект
+   * @returns {Object} JSON ответ
+   */
+  async createBranch(req, res) {
+    try {
+      const { projectId, name, baseBranch } = req.body;
+      
+      // Получаем путь к репозиторию
+      let connection;
+      try {
+        connection = await pool.getConnection();
+        const [projects] = await connection.query('SELECT repository_path FROM projects WHERE id = ?', [projectId]);
+        
+        if (projects.length === 0) {
+          return res.status(404).json({ error: 'Проект не найден' });
+        }
+        
+        const repoPath = projects[0].repository_path;
+        if (!repoPath) {
+          return res.status(400).json({ error: 'Репозиторий проекта не инициализирован' });
+        }
+        
+        // Используем GitService
+        const gitService = new GitService(repoPath);
+        
+        // Переключаемся на базовую ветку и обновляем ее
+        const base = baseBranch || 'main';
+        await gitService.checkout(base);
+        await gitService.pull('origin', base);
+        
+        // Создаем новую ветку
+        await gitService.createBranch(name, true); // true - checkout new branch
+        
+        logger.info(`Branch created for project #${projectId}: ${name}`);
+        
+        return res.status(200).json({
+          success: true,
+          message: 'Branch created successfully',
+          data: { projectId, name, baseBranch }
+        });
+      } finally {
+        if (connection) connection.release();
+      }
+    } catch (error) {
+      logger.error('Error creating branch:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to create branch',
+        details: error.message
+      });
+    }
+  },
+
+  /**
+   * Получает список веток
+   * @param {Object} req - Express request объект
+   * @param {Object} res - Express response объект
+   * @returns {Object} JSON ответ
+   */
+  async getBranches(req, res) {
+    try {
+      const { projectId } = req.query;
+      
+      // Получаем путь к репозиторию
+      let connection;
+      try {
+        connection = await pool.getConnection();
+        const [projects] = await connection.query('SELECT repository_path FROM projects WHERE id = ?', [projectId]);
+        
+        if (projects.length === 0) {
+          return res.status(404).json({ error: 'Проект не найден' });
+        }
+        
+        const repoPath = projects[0].repository_path;
+        if (!repoPath) {
+          return res.status(400).json({ error: 'Репозиторий проекта не инициализирован' });
+        }
+        
+        // Используем GitService
+        const gitService = new GitService(repoPath);
+        
+        // Получаем список веток
+        const branches = await gitService.getBranches();
+        
+        return res.status(200).json({
+          success: true,
+          data: {
+            projectId,
+            branches
+          }
+        });
+      } finally {
+        if (connection) connection.release();
+      }
+    } catch (error) {
+      logger.error('Error getting branches:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to get branches',
+        details: error.message
+      });
+    }
+  },
+
+  /**
+   * Выполняет checkout ветки
+   * @param {Object} req - Express request объект
+   * @param {Object} res - Express response объект
+   * @returns {Object} JSON ответ
+   */
+  async checkoutBranch(req, res) {
+    try {
+      const { projectId, branch } = req.body;
+      
+      // Получаем путь к репозиторию
+      let connection;
+      try {
+        connection = await pool.getConnection();
+        const [projects] = await connection.query('SELECT repository_path FROM projects WHERE id = ?', [projectId]);
+        
+        if (projects.length === 0) {
+          return res.status(404).json({ error: 'Проект не найден' });
+        }
+        
+        const repoPath = projects[0].repository_path;
+        if (!repoPath) {
+          return res.status(400).json({ error: 'Репозиторий проекта не инициализирован' });
+        }
+        
+        // Используем GitService
+        const gitService = new GitService(repoPath);
+        
+        // Выполняем checkout
+        await gitService.checkout(branch);
+        
+        logger.info(`Checked out branch for project #${projectId}: ${branch}`);
+        
+        return res.status(200).json({
+          success: true,
+          message: 'Branch checkout successful',
+          data: { projectId, branch }
+        });
+      } finally {
+        if (connection) connection.release();
+      }
+    } catch (error) {
+      logger.error('Error checking out branch:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to checkout branch',
+        details: error.message
+      });
+    }
+  },
+
+  /**
+   * Создает коммит
+   * @param {Object} req - Express request объект
+   * @param {Object} res - Express response объект
+   * @returns {Object} JSON ответ
+   */
+  async createCommit(req, res) {
+    try {
+      const { projectId, message, files } = req.body;
+      
+      // Получаем путь к репозиторию
+      let connection;
+      try {
+        connection = await pool.getConnection();
+        const [projects] = await connection.query('SELECT repository_path FROM projects WHERE id = ?', [projectId]);
+        
+        if (projects.length === 0) {
+          return res.status(404).json({ error: 'Проект не найден' });
+        }
+        
+        const repoPath = projects[0].repository_path;
+        if (!repoPath) {
+          return res.status(400).json({ error: 'Репозиторий проекта не инициализирован' });
+        }
+        
+        // Используем GitService
+        const gitService = new GitService(repoPath);
+        
+        // Добавляем файлы
+        if (files && files.length > 0) {
+          await gitService.add(files);
+        } else {
+          await gitService.add('.');
+        }
+        
+        // Создаем коммит
+        const commitResult = await gitService.commit(message);
+        
+        logger.info(`Commit created for project #${projectId}: ${message}`);
+        
+        return res.status(200).json({
+          success: true,
+          message: 'Commit created successfully',
+          data: { projectId, commitMessage: message, commitHash: commitResult.commit }
+        });
+      } finally {
+        if (connection) connection.release();
+      }
+    } catch (error) {
+      logger.error('Error creating commit:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to create commit',
+        details: error.message
+      });
+    }
+  },
+
+  /**
+   * Выполняет git push
+   * @param {Object} req - Express request объект
+   * @param {Object} res - Express response объект
+   * @returns {Object} JSON ответ
+   */
+  async pushBranch(req, res) {
+    try {
+      const { projectId, branch } = req.body;
+      
+      // Получаем путь к репозиторию
+      let connection;
+      try {
+        connection = await pool.getConnection();
+        const [projects] = await connection.query('SELECT repository_path FROM projects WHERE id = ?', [projectId]);
+        
+        if (projects.length === 0) {
+          return res.status(404).json({ error: 'Проект не найден' });
+        }
+        
+        const repoPath = projects[0].repository_path;
+        if (!repoPath) {
+          return res.status(400).json({ error: 'Репозиторий проекта не инициализирован' });
+        }
+        
+        // Используем GitService
+        const gitService = new GitService(repoPath);
+        
+        if (branch) {
+          await gitService.checkout(branch);
+        }
+        
+        // Выполняем push
+        const currentBranch = branch || await gitService.getCurrentBranch();
+        await gitService.push('origin', currentBranch);
+        
+        logger.info(`Branch pushed for project #${projectId}: ${currentBranch}`);
+        
+        return res.status(200).json({
+          success: true,
+          message: 'Branch pushed successfully',
+          data: { projectId, branch: currentBranch }
+        });
+      } finally {
+        if (connection) connection.release();
+      }
+    } catch (error) {
+      logger.error('Error pushing branch:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to push branch',
+        details: error.message
+      });
+    }
+  },
+
+  /**
+   * Получает статус репозитория
+   * @param {Object} req - Express request объект
+   * @param {Object} res - Express response объект
+   * @returns {Object} JSON ответ
+   */
+  async getStatus(req, res) {
+    try {
+      const { projectId } = req.query;
+      
+      // Получаем путь к репозиторию
+      let connection;
+      try {
+        connection = await pool.getConnection();
+        const [projects] = await connection.query('SELECT repository_path FROM projects WHERE id = ?', [projectId]);
+        
+        if (projects.length === 0) {
+          return res.status(404).json({ error: 'Проект не найден' });
+        }
+        
+        const repoPath = projects[0].repository_path;
+        if (!repoPath) {
+          return res.status(400).json({ error: 'Репозиторий проекта не инициализирован' });
+        }
+        
+        // Используем GitService
+        const gitService = new GitService(repoPath);
+        
+        // Получаем статус
+        const status = await gitService.status();
+        
+        return res.status(200).json({
+          success: true,
+          data: {
+            projectId,
+            status
+          }
+        });
+      } finally {
+        if (connection) connection.release();
+      }
+    } catch (error) {
+      logger.error('Error getting repository status:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to get repository status',
+        details: error.message
+      });
+    }
+  },
+
+  /**
+   * Получает историю коммитов
+   * @param {Object} req - Express request объект
+   * @param {Object} res - Express response объект
+   * @returns {Object} JSON ответ
+   */
+  async getCommits(req, res) {
+    try {
+      const { projectId, branch, limit } = req.query;
+      
+      // Получаем путь к репозиторию
+      let connection;
+      try {
+        connection = await pool.getConnection();
+        const [projects] = await connection.query('SELECT repository_path FROM projects WHERE id = ?', [projectId]);
+        
+        if (projects.length === 0) {
+          return res.status(404).json({ error: 'Проект не найден' });
+        }
+        
+        const repoPath = projects[0].repository_path;
+        if (!repoPath) {
+          return res.status(400).json({ error: 'Репозиторий проекта не инициализирован' });
+        }
+        
+        // Используем GitService
+        const gitService = new GitService(repoPath);
+        
+        // Выполняем checkout нужной ветки, если указана
+        if (branch) {
+          await gitService.checkout(branch);
+        }
+        
+        // Получаем историю коммитов
+        const options = [];
+        if (limit) {
+          options.push(`-n ${parseInt(limit)}`);
+        }
+        
+        const commits = await gitService.log(options);
+        
+        return res.status(200).json({
+          success: true,
+          data: {
+            projectId,
+            branch: branch || await gitService.getCurrentBranch(),
+            commits: commits.all
+          }
+        });
+      } finally {
+        if (connection) connection.release();
+      }
+    } catch (error) {
+      logger.error('Error getting commit history:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to get commit history',
+        details: error.message
+      });
     }
   }
 };

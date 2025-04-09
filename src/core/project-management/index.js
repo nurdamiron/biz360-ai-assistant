@@ -2,8 +2,8 @@
 const logger = require('../../utils/logger');
 const jiraIntegration = require('./jira-integration');
 const githubIntegration = require('./github-integration');
-const gitlabIntegration = require('./gitlab-integration');
-const azureDevopsIntegration = require('./azure-devops-integration');
+// const gitlabIntegration = require('./gitlab-integration');
+// const azureDevopsIntegration = require('./azure-devops-integration');
 const { ProjectModel, TaskModel, IntegrationTypeModel, IntegrationLinkModel } = require('../../models');
 
 /**
@@ -15,8 +15,8 @@ class ProjectManagementIntegration {
     this.providers = {
       jira: jiraIntegration,
       github: githubIntegration,
-      gitlab: gitlabIntegration,
-      'azure-devops': azureDevopsIntegration
+      // gitlab: gitlabIntegration,
+      // 'azure-devops': azureDevopsIntegration
     };
   }
 

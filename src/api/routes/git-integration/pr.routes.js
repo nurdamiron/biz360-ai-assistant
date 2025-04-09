@@ -3,7 +3,7 @@
 const express = require('express');
 const router = express.Router();
 const prController = require('../../../controller/git-integration/pr-controller');
-const authMiddleware = require('../../middleware/auth');
+const { authenticateCombined } = require('../../middleware/auth');
 const { validate } = require('../../middleware/validation');
 
 /**
@@ -13,7 +13,7 @@ const { validate } = require('../../middleware/validation');
  */
 router.post(
   '/create',
-  authMiddleware,
+  authenticateCombined,
   validate({
     body: {
       baseBranch: { type: 'string', required: true },
@@ -36,7 +36,7 @@ router.post(
  */
 router.post(
   '/conflicts',
-  authMiddleware,
+  authenticateCombined,
   validate({
     body: {
       baseBranch: { type: 'string', required: true },
@@ -54,7 +54,7 @@ router.post(
  */
 router.post(
   '/description',
-  authMiddleware,
+  authenticateCombined,
   validate({
     body: {
       baseBranch: { type: 'string', required: true },
@@ -76,7 +76,7 @@ router.post(
  */
 router.post(
   '/checklist',
-  authMiddleware,
+  authenticateCombined,
   validate({
     body: {
       baseBranch: { type: 'string', required: true },
@@ -97,7 +97,7 @@ router.post(
  */
 router.post(
   '/evaluate',
-  authMiddleware,
+  authenticateCombined,
   validate({
     body: {
       baseBranch: { type: 'string', required: true },
@@ -116,7 +116,7 @@ router.post(
  */
 router.get(
   '/:prId',
-  authMiddleware,
+  authenticateCombined,
   prController.getPRInfo
 );
 
@@ -127,7 +127,7 @@ router.get(
  */
 router.post(
   '/info',
-  authMiddleware,
+  authenticateCombined,
   validate({
     body: {
       prId: { type: 'string', required: true },
@@ -144,7 +144,7 @@ router.post(
  */
 router.put(
   '/:prId',
-  authMiddleware,
+  authenticateCombined,
   validate({
     body: {
       title: { type: 'string', optional: true },
@@ -162,7 +162,7 @@ router.put(
  */
 router.post(
   '/:prId/comment',
-  authMiddleware,
+  authenticateCombined,
   validate({
     body: {
       comment: { type: 'string', required: true }
@@ -178,7 +178,7 @@ router.post(
  */
 router.post(
   '/:prId/merge',
-  authMiddleware,
+  authenticateCombined,
   validate({
     body: {
       mergeMethod: { type: 'string', optional: true, enum: ['merge', 'squash', 'rebase'] },

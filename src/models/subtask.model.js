@@ -1,11 +1,10 @@
 // src/models/subtask.model.js
-
 const validationMiddleware = require('../api/middleware/validation');
 
 /**
- * Модель данных подзадачи с валидацией
+ * Класс для валидации данных подзадачи
  */
-class SubtaskModel {
+class SubtaskValidator {
   /**
    * Валидирует данные для создания новой подзадачи
    * @param {Object} subtaskData - Данные подзадачи
@@ -158,4 +157,88 @@ class SubtaskModel {
   }
 }
 
-module.exports = SubtaskModel;
+/**
+ * Функция для создания модели Subtask с Sequelize
+ * @param {Object} sequelize - Экземпляр Sequelize
+ * @param {Object} DataTypes - Типы данных Sequelize
+ * @returns {Object} - Модель Sequelize
+ */
+module.exports = (sequelize, DataTypes) => {
+  const Subtask = sequelize.define('subtask', {
+    id: {
+      type: DataTypes.INTEGER,
+      primaryKey: true,
+      autoIncrement: true
+    },
+    task_id: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      references: {
+        model: 'tasks',
+        key: 'id'
+      }
+    },
+    title: {
+      type: DataTypes.STRING(255),
+      allowNull: false
+    },
+    description: {
+      type: DataTypes.TEXT,
+      allowNull: false
+    },
+    status: {
+      type: DataTypes.ENUM('pending', 'in_progress', 'completed', 'failed'),
+      defaultValue: 'pending'
+    },
+    sequence_number: {
+      type: DataTypes.INTEGER,
+      defaultValue: 1
+    },
+    dependencies: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      get() {
+        const value = this.getDataValue('dependencies');
+        return value ? JSON.parse(value) : [];
+      },
+      set(value) {
+        this.setDataValue('dependencies', 
+          Array.isArray(value) ? JSON.stringify(value) : JSON.stringify([]));
+      }
+    },
+    estimated_hours: {
+      type: DataTypes.FLOAT,
+      allowNull: true
+    },
+    ai_generated: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false
+    },
+    created_at: {
+      type: DataTypes.DATE,
+      defaultValue: DataTypes.NOW
+    },
+    updated_at: {
+      type: DataTypes.DATE,
+      defaultValue: DataTypes.NOW
+    }
+  }, {
+    tableName: 'subtasks',
+    timestamps: true,
+    createdAt: 'created_at',
+    updatedAt: 'updated_at',
+    indexes: [
+      { fields: ['task_id'] },
+      { fields: ['status'] }
+    ]
+  });
+
+  // Добавляем статические методы валидации к модели
+  Subtask.validateCreate = SubtaskValidator.validateCreate;
+  Subtask.validateUpdate = SubtaskValidator.validateUpdate;
+  Subtask.validateStatusChange = SubtaskValidator.validateStatusChange;
+  Subtask.validateReorder = SubtaskValidator.validateReorder;
+  Subtask.toDatabase = SubtaskValidator.toDatabase;
+
+  return Subtask;
+};

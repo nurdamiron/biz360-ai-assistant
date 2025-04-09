@@ -42,7 +42,7 @@ app.use((req, res, next) => {
 });
 
 // Подключение основного API-маршрутизатора
-app.use('/api', require('./api'));
+// app.use('/api', require('./api'));
 
 // Маршрут состояния системы
 app.get('/api/status', async (req, res) => {

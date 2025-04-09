@@ -1,11 +1,13 @@
-// src/api/routes/task/task-ai.routes.js (обновленная версия)
+/**
+ * API маршруты для AI-возможностей, связанных с задачами
+ */
 const express = require('express');
 const router = express.Router({ mergeParams: true }); // Для доступа к параметрам из родительского роутера
 const taskAIController = require('../../../controller/task/task-ai.controller');
-const authMiddleware = require('../../middleware/auth');
+const { authenticateCombined } = require('../../middleware/auth');
 
 // Все эндпоинты требуют аутентификации
-router.use(authMiddleware);
+router.use(authenticateCombined);
 
 // Запуск декомпозиции задачи на подзадачи
 router.post('/decompose', taskAIController.decomposeTask);

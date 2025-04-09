@@ -566,6 +566,72 @@ CREATE TABLE `project_files` (
 
 ==================================================
 
+ТАБЛИЦА: project_settings
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL   
+  project_id int NOT NULL   
+  setting_key varchar(50) NOT NULL   
+  setting_value json NULL   
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP 
+  updated_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP 
+
+Внешние ключи:
+  project_settings_ibfk_1: project_settings.project_id -> projects.id
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  unique_project_setting UNIQUE: (project_id, setting_key)
+
+SQL создания таблицы:
+CREATE TABLE `project_settings` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `project_id` int NOT NULL,
+  `setting_key` varchar(50) NOT NULL,
+  `setting_value` json DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_project_setting` (`project_id`,`setting_key`),
+  CONSTRAINT `project_settings_ibfk_1` FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: project_tags
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL   
+  project_id int NOT NULL   
+  tag_name varchar(50) NOT NULL   
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP 
+
+Внешние ключи:
+  project_tags_ibfk_1: project_tags.project_id -> projects.id
+  project_tags_ibfk_2: project_tags.tag_name -> tags.name
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  unique_project_tag UNIQUE: (project_id, tag_name)
+  tag_name : (tag_name)
+
+SQL создания таблицы:
+CREATE TABLE `project_tags` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `project_id` int NOT NULL,
+  `tag_name` varchar(50) NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_project_tag` (`project_id`,`tag_name`),
+  KEY `tag_name` (`tag_name`),
+  CONSTRAINT `project_tags_ibfk_1` FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `project_tags_ibfk_2` FOREIGN KEY (`tag_name`) REFERENCES `tags` (`name`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
 ТАБЛИЦА: project_templates
 --------------------------------------------------
 
@@ -665,6 +731,29 @@ CREATE TABLE `schema_columns` (
   PRIMARY KEY (`id`),
   KEY `table_id` (`table_id`),
   CONSTRAINT `schema_columns_ibfk_1` FOREIGN KEY (`table_id`) REFERENCES `schema_tables` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: schema_migrations
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL   
+  name varchar(255) NOT NULL   
+  applied_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP 
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  unique_migration_name UNIQUE: (name)
+
+SQL создания таблицы:
+CREATE TABLE `schema_migrations` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `name` varchar(255) NOT NULL,
+  `applied_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_migration_name` (`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 ==================================================
@@ -839,6 +928,35 @@ CREATE TABLE `subtasks` (
   KEY `idx_subtasks_status` (`status`),
   CONSTRAINT `subtasks_ibfk_1` FOREIGN KEY (`task_id`) REFERENCES `tasks` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+==================================================
+
+ТАБЛИЦА: tags
+--------------------------------------------------
+
+Колонки:
+  id int NOT NULL   
+  name varchar(50) NOT NULL   
+  description varchar(255) NULL   
+  color varchar(20) NULL  DEFAULT #3498db 
+  created_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP 
+  updated_at timestamp NULL  DEFAULT CURRENT_TIMESTAMP 
+
+Индексы:
+  PRIMARY UNIQUE: (id)
+  unique_tag_name UNIQUE: (name)
+
+SQL создания таблицы:
+CREATE TABLE `tags` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `name` varchar(50) NOT NULL,
+  `description` varchar(255) DEFAULT NULL,
+  `color` varchar(20) DEFAULT '#3498db',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_tag_name` (`name`)
+) ENGINE=InnoDB AUTO_INCREMENT=11 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 ==================================================
 

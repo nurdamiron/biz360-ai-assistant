@@ -8,7 +8,7 @@ const prRoutes = require('./git-integration/pr.routes');
 
 // Импортируем существующие контроллеры
 const gitController = require('../../controller/git-integration/git-controller');
-const authMiddleware = require('../middleware/auth');
+const { authenticateCombined } = require('../middleware/auth');
 const { validate } = require('../middleware/validation');
 
 // Регистрируем маршруты для PR
@@ -21,7 +21,7 @@ router.use('/pr', prRoutes);
  */
 router.post(
   '/clone',
-  authMiddleware,
+  authenticateCombined,
   validate({
     body: {
       repositoryUrl: { type: 'string', required: true },
@@ -39,7 +39,7 @@ router.post(
  */
 router.post(
   '/pull',
-  authMiddleware,
+  authenticateCombined,
   validate({
     body: {
       projectId: { type: 'string', required: true },
@@ -56,7 +56,7 @@ router.post(
  */
 router.post(
   '/branch',
-  authMiddleware,
+  authenticateCombined,
   validate({
     body: {
       projectId: { type: 'string', required: true },
@@ -74,7 +74,7 @@ router.post(
  */
 router.get(
   '/branches',
-  authMiddleware,
+  authenticateCombined,
   validate({
     query: {
       projectId: { type: 'string', required: true }
@@ -90,7 +90,7 @@ router.get(
  */
 router.post(
   '/checkout',
-  authMiddleware,
+  authenticateCombined,
   validate({
     body: {
       projectId: { type: 'string', required: true },
@@ -107,7 +107,7 @@ router.post(
  */
 router.post(
   '/commit',
-  authMiddleware,
+  authenticateCombined,
   validate({
     body: {
       projectId: { type: 'string', required: true },
@@ -125,7 +125,7 @@ router.post(
  */
 router.post(
   '/push',
-  authMiddleware,
+  authenticateCombined,
   validate({
     body: {
       projectId: { type: 'string', required: true },
@@ -142,7 +142,7 @@ router.post(
  */
 router.get(
   '/status',
-  authMiddleware,
+  authenticateCombined,
   validate({
     query: {
       projectId: { type: 'string', required: true }
@@ -158,7 +158,7 @@ router.get(
  */
 router.get(
   '/commits',
-  authMiddleware,
+  authenticateCombined,
   validate({
     query: {
       projectId: { type: 'string', required: true },

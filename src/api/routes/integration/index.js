@@ -2,51 +2,55 @@
 const express = require('express');
 const router = express.Router();
 const integrationController = require('../../../controller/integration/integration.controller');
-const authMiddleware = require('../../middleware/auth');
-const validationMiddleware = require('../../middleware/validation');
-const { 
-  createIntegrationSchema, 
-  updateIntegrationSchema, 
+const { authenticateCombined } = require('../../middleware/auth');
+const { validate } = require('../../middleware/validation');
+const {
+  createIntegrationSchema,
+  updateIntegrationSchema,
   synchronizeTaskSchema,
   importTasksSchema
 } = require('./validation');
 
-// Все эндпоинты требуют аутентификации
-router.use(authMiddleware);
+// Apply authentication to all routes in this router
+router.use(authenticateCombined);
 
-// Получение списка доступных типов интеграций
+// Get list of available integration types
 router.get('/types', integrationController.getIntegrationTypes);
 
-// Получение активных интеграций для проекта
+// Get active integrations for a project
 router.get('/project/:projectId', integrationController.getProjectIntegrations);
 
-// Создание интеграции для проекта
-router.post('/project/:projectId',
-  validationMiddleware(createIntegrationSchema),
+// Create integration for a project
+router.post(
+  '/project/:projectId',
+  validate(createIntegrationSchema),
   integrationController.createIntegration
 );
 
-// Обновление интеграции
-router.put('/:integrationId',
-  validationMiddleware(updateIntegrationSchema),
+// Update integration
+router.put(
+  '/:integrationId',
+  validate(updateIntegrationSchema),
   integrationController.updateIntegration
 );
 
-// Удаление интеграции
+// Delete integration
 router.delete('/:integrationId', integrationController.deleteIntegration);
 
-// Получение внешних ссылок для задачи
+// Get external links for a task
 router.get('/task/:taskId/links', integrationController.getTaskExternalLinks);
 
-// Синхронизация задачи с внешней системой
-router.post('/task/:taskId/sync',
-  validationMiddleware(synchronizeTaskSchema),
+// Synchronize task with external system
+router.post(
+  '/task/:taskId/sync',
+  validate(synchronizeTaskSchema),
   integrationController.synchronizeTask
 );
 
-// Импорт задач из внешней системы
-router.post('/project/:projectId/import-tasks',
-  validationMiddleware(importTasksSchema),
+// Import tasks from external system
+router.post(
+  '/project/:projectId/import-tasks',
+  validate(importTasksSchema),
   integrationController.importTasksFromExternalSystem
 );
 

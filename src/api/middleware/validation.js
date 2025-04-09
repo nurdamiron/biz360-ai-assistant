@@ -5,6 +5,62 @@ const logger = require('../../utils/logger');
 /**
  * Middleware для валидации запросов с использованием моделей
  */
+
+/**
+ * Универсальный валидатор для запросов
+ * @param {Object} schema - Схема валидации с ключами body, params, query
+ * @returns {Function} Express middleware
+ */
+function validate(schema) {
+  return (req, res, next) => {
+    const errors = [];
+    
+    if (schema.body) {
+      // Валидация тела запроса
+      for (const [field, rules] of Object.entries(schema.body)) {
+        if (rules.required && (req.body[field] === undefined || req.body[field] === null || req.body[field] === '')) {
+          errors.push(`Поле '${field}' обязательно`);
+          continue;
+        }
+        
+        if (req.body[field] !== undefined) {
+          // Проверка типа
+          if (rules.type === 'string' && typeof req.body[field] !== 'string') {
+            errors.push(`Поле '${field}' должно быть строкой`);
+          } else if (rules.type === 'number' && typeof req.body[field] !== 'number' && isNaN(Number(req.body[field]))) {
+            errors.push(`Поле '${field}' должно быть числом`);
+          } else if (rules.type === 'boolean' && typeof req.body[field] !== 'boolean') {
+            errors.push(`Поле '${field}' должно быть boolean`);
+          } else if (rules.type === 'array' && !Array.isArray(req.body[field])) {
+            errors.push(`Поле '${field}' должно быть массивом`);
+          } else if (rules.type === 'object' && (typeof req.body[field] !== 'object' || Array.isArray(req.body[field]))) {
+            errors.push(`Поле '${field}' должно быть объектом`);
+          }
+          
+          // Проверка enum
+          if (rules.enum && !rules.enum.includes(req.body[field])) {
+            errors.push(`Поле '${field}' должно быть одним из значений: ${rules.enum.join(', ')}`);
+          }
+        }
+      }
+    }
+    
+    // Аналогично для query и params
+    // ... (добавьте код для валидации req.query и req.params)
+    
+    if (errors.length > 0) {
+      logger.warn(`Ошибка валидации: ${errors.join(', ')}`);
+      return res.status(400).json({
+        success: false,
+        error: 'Ошибка валидации',
+        details: errors
+      });
+    }
+    
+    next();
+  };
+}
+
 const validationMiddleware = {
   /**
    * Validates request body against a model
@@ -246,4 +302,7 @@ const validationMiddleware = {
   }
 };
 
-module.exports = validationMiddleware;
+module.exports = {
+  ...validationMiddleware,
+  validate
+};

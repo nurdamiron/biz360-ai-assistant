@@ -31,6 +31,7 @@ const User = require('./user.model')(sequelize, Sequelize);
 const Project = require('./project.model')(sequelize, Sequelize);
 const Task = require('./task.model')(sequelize, Sequelize);
 const Subtask = require('./subtask.model')(sequelize, Sequelize);
+const Comment = require('./comment.model')(sequelize, Sequelize);
 const CodeGeneration = require('./code-generation.model')(sequelize, Sequelize);
 const LlmInteraction = require('./llm-interaction.model')(sequelize, Sequelize);
 const LlmTokenUsage = require('./llm-token-usage.model')(sequelize, Sequelize);
@@ -51,12 +52,21 @@ Task.belongsTo(Project, { foreignKey: 'project_id', as: 'project' });
 Task.belongsTo(Task, { foreignKey: 'parent_task_id', as: 'parentTask' });
 Task.hasMany(Task, { foreignKey: 'parent_task_id', as: 'childTasks' });
 Task.hasMany(Subtask, { foreignKey: 'task_id', as: 'subtasks' });
+Task.hasMany(Comment, { foreignKey: 'task_id', as: 'comments' });
 Task.hasMany(CodeGeneration, { foreignKey: 'task_id', as: 'codeGenerations' });
 Task.hasMany(LlmInteraction, { foreignKey: 'task_id', as: 'llmInteractions' });
 Task.hasMany(TaskLog, { foreignKey: 'task_id', as: 'logs' });
 
 // Связи подзадач
 Subtask.belongsTo(Task, { foreignKey: 'task_id', as: 'task' });
+Subtask.hasMany(Comment, { foreignKey: 'subtask_id', as: 'comments' });
+
+// Связи комментариев
+Comment.belongsTo(Task, { foreignKey: 'task_id', as: 'task' });
+Comment.belongsTo(Subtask, { foreignKey: 'subtask_id', as: 'subtask' });
+Comment.belongsTo(User, { foreignKey: 'user_id', as: 'author' });
+Comment.belongsTo(Comment, { foreignKey: 'parent_comment_id', as: 'parentComment' });
+Comment.hasMany(Comment, { foreignKey: 'parent_comment_id', as: 'replies' });
 
 // Связи файлов проекта
 ProjectFile.belongsTo(Project, { foreignKey: 'project_id', as: 'project' });
@@ -75,15 +85,20 @@ Feedback.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 
 // Связи взаимодействий с LLM
 LlmInteraction.belongsTo(Task, { foreignKey: 'task_id', as: 'task' });
+LlmInteraction.hasMany(LlmTokenUsage, { foreignKey: 'llm_interaction_id', as: 'tokenUsage' });
 
-// Экспорт моделей и экземпляра Sequelize
-module.exports = {
-  sequelize,
-  Sequelize,
+// Связи использования токенов
+LlmTokenUsage.belongsTo(LlmInteraction, { foreignKey: 'llm_interaction_id', as: 'llmInteraction' });
+LlmTokenUsage.belongsTo(Task, { foreignKey: 'task_id', as: 'task' });
+LlmTokenUsage.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
+
+// Запуск ассоциаций для моделей, которые используют метод associate
+const models = {
   User,
   Project,
   Task,
   Subtask,
+  Comment,
   CodeGeneration,
   LlmInteraction,
   LlmTokenUsage,
@@ -92,4 +107,18 @@ module.exports = {
   TaskQueue,
   TaskLog,
   Feedback
+};
+
+// Вызываем метод associate для каждой модели, если он существует
+Object.values(models).forEach(model => {
+  if ('associate' in model) {
+    model.associate(models);
+  }
+});
+
+// Экспорт моделей и экземпляра Sequelize
+module.exports = {
+  sequelize,
+  Sequelize,
+  ...models
 };

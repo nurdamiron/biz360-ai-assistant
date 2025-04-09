@@ -212,8 +212,8 @@ class TaskOrchestrationController {
         logger.info(`Задача создана: ${taskId}`);
         
         // Инициализируем задачу в системе оркестрации
-        const result = await this.taskOrchestrator.initializeTask(taskId.toString(), {
-          projectId: project_id ? project_id.toString() : null,
+        const orchestrationResult = await this.taskOrchestrator.initializeTask(taskId.toString(), {
+                    projectId: project_id ? project_id.toString() : null,
           task: {
             title,
             description,

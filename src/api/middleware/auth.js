@@ -226,11 +226,79 @@ async function logAPIKeyUsage(keyId, req) {
   } catch (error) {
     logger.error('Ошибка при логировании использования API ключа:', error);
   }
-}
+};
+
+/**
+ * Middleware для проверки доступа к проекту
+ */
+const checkProjectAccess = async (req, res, next) => {
+  // Получаем ID проекта из параметров URL или query-параметров
+  const projectId = req.params.id || req.query.projectId;
+  
+  if (!projectId) {
+    return res.status(400).json({ error: 'ID проекта не указан' });
+  }
+  
+  try {
+    // Проверка доступа пользователя к проекту
+    const connection = await pool.getConnection();
+    
+    // Администраторы имеют доступ ко всем проектам
+    if (req.user.role === 'admin') {
+      connection.release();
+      return next();
+    }
+    
+    // Проверяем, является ли пользователь участником проекта
+    const [projectMembers] = await connection.query(
+      'SELECT * FROM project_members WHERE project_id = ? AND user_id = ?',
+      [projectId, req.user.id]
+    );
+    
+    connection.release();
+    
+    if (projectMembers.length > 0) {
+      return next();
+    }
+    
+    return res.status(403).json({ error: 'Нет доступа к проекту' });
+  } catch (error) {
+    logger.error('Ошибка при проверке доступа к проекту:', error);
+    return res.status(500).json({ error: 'Ошибка сервера при проверке доступа' });
+  }
+};
+
+/**
+ * Middleware для проверки доступа к данным пользователя
+ */
+const checkUserAccessOrSelf = (req, res, next) => {
+  // Если userId не указан, используем текущего пользователя
+  const userId = req.params.id ? parseInt(req.params.id) : req.user.id;
+  
+  // Администраторы имеют доступ к данным всех пользователей
+  if (req.user.role === 'admin') {
+    return next();
+  }
+  
+  // Пользователи могут просматривать только свои данные
+  if (userId === req.user.id) {
+    return next();
+  }
+  
+  // Менеджеры имеют ограниченный доступ к данным других пользователей
+  if (req.user.role === 'manager') {
+    // Здесь можно добавить дополнительную логику для менеджеров
+    return next();
+  }
+  
+  return res.status(403).json({ error: 'Нет доступа к данным пользователя' });
+};
 
 module.exports = {
   authenticateJWT,
   authenticateAPIKey,
   authenticateCombined,
-  authorize
+  authorize,
+  checkProjectAccess,
+  checkUserAccessOrSelf
 };
