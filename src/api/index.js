@@ -20,6 +20,7 @@ const notificationsRoutes = require('./routes/notifications'); // Маршрут
 const queueRoutes = require('./routes/queue');
 const feedbackRoutes = require('./routes/feedback');
 const integrationRoutes = require('./routes/integration');
+const { router: orchestrationRoutes, initRoutes: initOrchestrationRoutes } = require('./routes/orchestration.routes');
 
 
 
@@ -64,6 +65,7 @@ router.use('/notifications', notificationsRoutes); // Новые маршрут�
 router.use('/queues', queueRoutes);
 router.use('/feedback', feedbackRoutes);
 router.use('/integrations', integrationRoutes);
+router.use('/orchestration', orchestrationRoutes);
 
 // Обработчик для несуществующих маршрутов
 router.use('*', (req, res) => {
@@ -74,4 +76,47 @@ router.use('*', (req, res) => {
   });
 });
 
-module.exports = router;
+/**
+ * Инициализирует API с заданными настройками.
+ * @param {Object} app - Экземпляр Express приложения.
+ * @param {Object} options - Настройки для инициализации.
+ * @returns {Object} - Инициализированный маршрутизатор.
+ */
+const initApi = (app, options = {}) => {
+  // Инициализируем маршруты оркестрации
+  initOrchestrationRoutes(options.orchestration || {});
+  
+  // Добавляем маршрут состояния системы
+  router.get('/status', async (req, res) => {
+    try {
+      // Проверяем состояние БД
+      const pool = app.locals.db || options.db;
+      const connection = await pool.getConnection();
+      connection.release();
+      
+      res.json({
+        status: 'ok',
+        version: '0.1.0',
+        controller: options.controller?.running ? 'running' : 'stopped',
+        database: 'connected',
+        websocket: options.websocket ? 'running' : 'stopped',
+        orchestration: 'enabled'
+      });
+    } catch (error) {
+      res.status(500).json({
+        status: 'error',
+        error: error.message
+      });
+    }
+  });
+  
+  // Регистрируем маршрутизатор в приложении
+  app.use('/api', router);
+  
+  return router;
+};
+
+module.exports = {
+  router,
+  initApi
+};

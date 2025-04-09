@@ -3,18 +3,18 @@
 const { expect } = require('chai');
 const sinon = require('sinon');
 const prManager = require('../../../../src/core/vcs-manager/pr-manager');
-const gitClient = require('../../../../src/core/vcs-manager/git-client');
+const GitService = require('../../../../src/core/vcs-manager/git-client');
 const prDescriptionGenerator = require('../../../../src/core/vcs-manager/pr-description-generator');
 const conflictChecker = require('../../../../src/core/vcs-manager/conflict-checker');
 const reviewChecklistGenerator = require('../../../../src/core/vcs-manager/review-checklist-generator');
 const logger = require('../../../../src/utils/logger');
 
 describe('PRManager', () => {
-  let gitClientStub, prDescriptionGeneratorStub, conflictCheckerStub, reviewChecklistGeneratorStub, loggerStub;
+  let GitServiceStub, prDescriptionGeneratorStub, conflictCheckerStub, reviewChecklistGeneratorStub, loggerStub;
 
   beforeEach(() => {
     // Создаем заглушки для зависимостей
-    gitClientStub = sinon.stub(gitClient);
+    GitServiceStub = sinon.stub(GitService);
     prDescriptionGeneratorStub = sinon.stub(prDescriptionGenerator);
     conflictCheckerStub = sinon.stub(conflictChecker);
     reviewChecklistGeneratorStub = sinon.stub(reviewChecklistGenerator);
@@ -47,7 +47,7 @@ describe('PRManager', () => {
         number: 123
       };
       
-      gitClientStub.createPullRequest = sinon.stub().resolves(mockPR);
+      GitServiceStub.createPullRequest = sinon.stub().resolves(mockPR);
       
       // Вызываем тестируемый метод
       const options = {
@@ -82,8 +82,8 @@ describe('PRManager', () => {
         taskTitle: 'Разработать новую функцию'
       });
       
-      expect(gitClientStub.createPullRequest.calledOnce).to.be.true;
-      expect(gitClientStub.createPullRequest.firstCall.args[0]).to.deep.include({
+      expect(GitServiceStub.createPullRequest.calledOnce).to.be.true;
+      expect(GitServiceStub.createPullRequest.firstCall.args[0]).to.deep.include({
         baseBranch: 'main',
         headBranch: 'feature/new-feature',
         title: 'Добавление новой функции',
@@ -121,7 +121,7 @@ describe('PRManager', () => {
       // Проверяем, что только проверка конфликтов была вызвана
       expect(conflictCheckerStub.checkConflicts.calledOnce).to.be.true;
       expect(prDescriptionGeneratorStub.generateDescription.called).to.be.false;
-      expect(gitClientStub.createPullRequest.called).to.be.false;
+      expect(GitServiceStub.createPullRequest.called).to.be.false;
     });
   });
 

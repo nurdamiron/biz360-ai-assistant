@@ -205,8 +205,8 @@ class DocumentationGenerator {
    */
   async updateDocumentationForChanges(since, options = {}) {
     try {
-      const gitUtils = require('../../utils/git-utils');
-      const changedFiles = await gitUtils.getChangedFiles(since);
+    const gitService = require('../core/vcs-manager/gitService'); // Правильный путь импорта
+    const changedFiles = await gitService.getChangedFiles(since);
       
       const fileToProcess = changedFiles.filter(file => {
         const ext = path.extname(file);

@@ -2,7 +2,7 @@
 const logger = require('../../utils/logger');
 const { CodeGenerationModel } = require('../../models');
 const codeGenerator = require('../../core/code-generator');
-const gitClient = require('../../utils/git-client');
+const GitService = require('../../core/vcs-manager/gitService');
 const notificationManager = require('../../utils/notification-manager');
 
 /**
@@ -30,7 +30,7 @@ async function processCodeGeneration(job) {
     const { projectId, repositoryUrl, branch } = context;
     
     // Клонируем/обновляем репозиторий (если необходимо)
-    const repoPath = await gitClient.prepareRepository(repositoryUrl, branch);
+    const repoPath = await GitService.prepareRepository(repositoryUrl, branch);
     
     // Выполняем генерацию кода
     const result = await codeGenerator.generateCode({

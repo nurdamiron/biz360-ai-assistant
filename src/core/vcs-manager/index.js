@@ -1,11 +1,11 @@
 // src/core/vcs-manager/index.js
 
-const GitClient = require('./git-client');
+const GitService = require('./gitService');
 const PRManager = require('./pr-manager');
 const logger = require('../../utils/logger');
 const { pool } = require('../../config/db.config');
 const path = require('path');
-const { parseRepositoryUrl } = require('../../utils/git-utils');
+const { parseRepositoryUrl } = require('../vcs-manager/gitService');
 
 /**
  * Класс для управления репозиторием и работы с VCS
@@ -17,7 +17,7 @@ class VCSManager {
    */
   constructor(projectId) {
     this.projectId = projectId;
-    this.gitClient = null;
+    this.GitService = null;
     this.prManager = null;
   }
 
@@ -27,7 +27,7 @@ class VCSManager {
    */
   async initialize() {
     try {
-      if (this.gitClient && this.prManager) {
+      if (this.GitService && this.prManager) {
         return;
       }
       
@@ -35,8 +35,8 @@ class VCSManager {
       const projectInfo = await this.getProjectInfo();
       
       // Инициализируем Git-клиент
-      this.gitClient = new GitClient(projectInfo.repository_url);
-      await this.gitClient.initialize();
+      this.GitService = new GitService(projectInfo.repository_url);
+      await this.GitService.initialize();
       
       // Инициализируем менеджер PR
       const { owner, repo } = parseRepositoryUrl(projectInfo.repository_url);
@@ -107,7 +107,7 @@ class VCSManager {
         .substring(0, 30)}`;
       
       // Создаем ветку
-      await this.gitClient.createBranch(branchName);
+      await this.GitService.createBranch(branchName);
       
       return branchName;
     } catch (error) {
@@ -128,10 +128,10 @@ class VCSManager {
       await this.initialize();
       
       // Добавляем файлы в индекс
-      await this.gitClient.addFiles(files);
+      await this.GitService.addFiles(files);
       
       // Создаем коммит
-      const commit = await this.gitClient.commit(message);
+      const commit = await this.GitService.commit(message);
       
       // Сохраняем информацию о коммите в БД
       const connection = await pool.getConnection();
@@ -161,7 +161,7 @@ class VCSManager {
     try {
       await this.initialize();
       
-      await this.gitClient.push(branch);
+      await this.GitService.push(branch);
       
       logger.info(`Изменения отправлены в удаленный репозиторий (ветка ${branch})`);
     } catch (error) {
@@ -195,7 +195,7 @@ class VCSManager {
       const task = tasks[0];
       
       // Получаем список измененных файлов
-      const changedFiles = await this.gitClient.getChangedFiles();
+      const changedFiles = await this.GitService.getChangedFiles();
       
       // Формируем сообщение для PR
       const { title, body } = this.prManager.createPullRequestMessage(task, changedFiles);
@@ -229,7 +229,7 @@ class VCSManager {
     try {
       await this.initialize();
       
-      return await this.gitClient.getFileContent(filePath);
+      return await this.GitService.getFileContent(filePath);
     } catch (error) {
       logger.error(`Ошибка при чтении файла ${filePath}:`, error);
       throw error;
@@ -246,7 +246,7 @@ class VCSManager {
     try {
       await this.initialize();
       
-      await this.gitClient.writeFile(filePath, content);
+      await this.GitService.writeFile(filePath, content);
     } catch (error) {
       logger.error(`Ошибка при записи файла ${filePath}:`, error);
       throw error;

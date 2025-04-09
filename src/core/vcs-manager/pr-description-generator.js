@@ -3,7 +3,7 @@
 const llmClient = require('../../utils/llm-client');
 const promptManager = require('../../utils/prompt-manager');
 const logger = require('../../utils/logger');
-const gitClient = require('./git-client');
+const GitService = require('./git-client');
 
 /**
  * Генератор описаний для Pull Request
@@ -66,7 +66,7 @@ class PrDescriptionGenerator {
   async _getDiffSummary(baseBranch, headBranch) {
     try {
       // Получаем статистику изменений
-      const diffStats = await gitClient.getDiffStats(baseBranch, headBranch);
+      const diffStats = await GitService.getDiffStats(baseBranch, headBranch);
       
       // Форматируем результат
       return [
@@ -89,7 +89,7 @@ class PrDescriptionGenerator {
    */
   async _getCommitsList(baseBranch, headBranch) {
     try {
-      return await gitClient.getCommits(baseBranch, headBranch);
+      return await GitService.getCommits(baseBranch, headBranch);
     } catch (error) {
       logger.warn('Не удалось получить список коммитов:', error);
       return [];
@@ -105,7 +105,7 @@ class PrDescriptionGenerator {
    */
   async _getChangeList(baseBranch, headBranch) {
     try {
-      return await gitClient.getChangedFiles(baseBranch, headBranch);
+      return await GitService.getChangedFiles(baseBranch, headBranch);
     } catch (error) {
       logger.warn('Не удалось получить список измененных файлов:', error);
       return [];

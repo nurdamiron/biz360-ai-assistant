@@ -1,77 +1,174 @@
-// src/core/orchestrator/step-executor.js
+/**
+ * @fileoverview Определяет базовый абстрактный класс для всех исполнителей шагов
+ * методологии. Все конкретные исполнители должны наследоваться от этого класса
+ * и реализовывать метод execute().
+ */
+
+const logger = require('../../utils/logger');
+const { ValidationManager } = require('./validation-manager');
 
 /**
- * Базовый интерфейс для исполнителя шагов методологии
- * Все исполнители конкретных шагов должны наследоваться от этого класса
+ * Базовый абстрактный класс для всех исполнителей шагов.
  */
 class StepExecutor {
-    /**
-     * Название шага
-     * @type {string}
-     */
-    static stepName = 'Abstract Step';
-  
-    /**
-     * Номер шага в методологии (от 1 до 16)
-     * @type {number}
-     */
-    static stepNumber = 0;
-  
-    /**
-     * Проверяет, может ли шаг быть выполнен с текущим контекстом
-     * @param {object} context - Контекст задачи
-     * @returns {Promise<boolean>} - true если шаг может быть выполнен, иначе false
-     */
-    async canExecute(context) {
-      // Базовая реализация всегда возвращает true
-      // Переопределяется в конкретных исполнителях
-      return true;
+  /**
+   * Создает экземпляр StepExecutor.
+   * @param {Object} options - Опции для инициализации.
+   * @param {Object} options.contextManager - Экземпляр ContextManager.
+   * @param {Object} options.stateManager - Экземпляр StateManager.
+   * @param {Object} options.notificationManager - Экземпляр NotificationManager.
+   * @param {Object} options.db - Интерфейс к базе данных.
+   * @param {Object} options.llmClient - Клиент для взаимодействия с LLM.
+   * @param {Object} options.promptManager - Менеджер промптов.
+   */
+  constructor({
+    contextManager,
+    stateManager,
+    notificationManager,
+    db,
+    llmClient,
+    promptManager
+  } = {}) {
+    // Проверяем, что класс не инстанцируется напрямую
+    if (new.target === StepExecutor) {
+      throw new TypeError('Cannot construct StepExecutor instances directly');
     }
-  
-    /**
-     * Выполняет шаг с текущим контекстом
-     * @param {object} context - Контекст задачи
-     * @returns {Promise<object>} - Результат выполнения шага
-     * @throws {Error} - В случае ошибки выполнения
-     */
-    async execute(context) {
-      throw new Error('Method execute() must be implemented by subclass');
+    
+    this.contextManager = contextManager;
+    this.stateManager = stateManager;
+    this.notificationManager = notificationManager;
+    this.db = db;
+    this.llmClient = llmClient;
+    this.promptManager = promptManager;
+    
+    // Создаем валидатор
+    this.validator = new ValidationManager();
+    
+    // Инициализируем метаданные шага
+    this.metadata = this.getMetadata();
+  }
+
+  /**
+   * Получает метаданные шага.
+   * @returns {Object} - Метаданные шага.
+   */
+  getMetadata() {
+    return {
+      name: 'abstract',
+      description: 'Abstract step executor',
+      timeout: 60000, // 1 минута по умолчанию
+      maxRetries: 3,
+      requiresLLM: false,
+      requiresGit: false,
+      requiresExecution: false,
+      inputSchema: null,
+      outputSchema: null
+    };
+  }
+
+  /**
+   * Выполняет шаг методологии.
+   * @param {string} taskId - Идентификатор задачи.
+   * @param {Object} input - Входные данные для шага.
+   * @param {Object} context - Контекст задачи.
+   * @returns {Promise<Object>} - Результат выполнения шага.
+   */
+  async execute(taskId, input, context) {
+    throw new Error('Method execute() must be implemented by derived classes');
+  }
+
+  /**
+   * Валидирует входные данные шага.
+   * @param {Object} input - Входные данные для шага.
+   * @returns {Object} - Результат валидации.
+   */
+  validateInput(input) {
+    if (!this.metadata.inputSchema) {
+      return { valid: true };
     }
-  
-    /**
-     * Откатывает изменения, внесенные шагом, в случае ошибки
-     * @param {object} context - Контекст задачи
-     * @returns {Promise<void>}
-     */
-    async rollback(context) {
-      // Базовая реализация ничего не делает
-      // Переопределяется в конкретных исполнителях при необходимости
-      return;
+    
+    return this.validator.validate(input, this.metadata.inputSchema);
+  }
+
+  /**
+   * Валидирует результат выполнения шага.
+   * @param {Object} result - Результат выполнения шага.
+   * @returns {Object} - Результат валидации.
+   */
+  validateOutput(result) {
+    if (!this.metadata.outputSchema) {
+      return { valid: true };
     }
-  
-    /**
-     * Оценивает необходимые ресурсы и время для выполнения шага
-     * @param {object} context - Контекст задачи
-     * @returns {Promise<object>} - Оценка ресурсов {timeEstimate, memoryEstimate, cpuEstimate}
-     */
-    async estimateResources(context) {
-      // Базовая реализация возвращает default оценки
-      return {
-        timeEstimate: '1m', // Оценка времени (строка в формате 1m, 30s, 2h)
-        memoryEstimate: '100MB', // Оценка памяти
-        cpuEstimate: 'low', // Оценка CPU (low, medium, high)
-        tokens: 1000 // Оценка количества токенов для LLM
-      };
+    
+    return this.validator.validate(result, this.metadata.outputSchema);
+  }
+
+  /**
+   * Подготавливает базовый результат выполнения шага.
+   * @param {boolean} success - Флаг успешности выполнения.
+   * @param {string} [error=null] - Сообщение об ошибке (если есть).
+   * @param {Array<string>} [warnings=[]] - Предупреждения.
+   * @returns {Object} - Базовый результат.
+   */
+  prepareBaseResult(success, error = null, warnings = []) {
+    return {
+      success,
+      error,
+      warnings,
+      timestamp: new Date(),
+      duration: 0 // Будет заполнено позже
+    };
+  }
+
+  /**
+   * Логирует начало выполнения шага.
+   * @param {string} taskId - Идентификатор задачи.
+   * @param {Object} input - Входные данные для шага.
+   */
+  logStepStart(taskId, input) {
+    logger.info(`Starting step ${this.metadata.name} for task ${taskId}`);
+    logger.debug(`Step ${this.metadata.name} input:`, JSON.stringify(input));
+  }
+
+  /**
+   * Логирует завершение выполнения шага.
+   * @param {string} taskId - Идентификатор задачи.
+   * @param {Object} result - Результат выполнения шага.
+   * @param {number} duration - Длительность выполнения в миллисекундах.
+   */
+  logStepCompletion(taskId, result, duration) {
+    if (result.success) {
+      logger.info(`Step ${this.metadata.name} completed successfully for task ${taskId} in ${duration}ms`);
+    } else {
+      logger.error(`Step ${this.metadata.name} failed for task ${taskId}: ${result.error}`);
     }
-  
-    /**
-     * Возвращает информацию о зависимостях для шага
-     * @returns {Array<number>} - Массив номеров шагов, от которых зависит текущий
-     */
-    getDependencies() {
-      // Базовая реализация не имеет зависимостей
-      return [];
+    
+    if (result.warnings && result.warnings.length > 0) {
+      logger.warn(`Step ${this.metadata.name} warnings for task ${taskId}:`, result.warnings);
     }
   }
-  
-  module.exports = StepExecutor;
+
+  /**
+   * Отправляет уведомление о прогрессе выполнения шага.
+   * @param {string} taskId - Идентификатор задачи.
+   * @param {number} progress - Процент выполнения (0-100).
+   * @param {string} message - Сообщение о прогрессе.
+   * @returns {Promise<void>}
+   */
+  async sendProgressNotification(taskId, progress, message) {
+    if (this.notificationManager) {
+      await this.notificationManager.sendProgress(
+        taskId,
+        progress,
+        message,
+        {
+          data: {
+            step: this.metadata.name
+          }
+        }
+      );
+    }
+  }
+}
+
+module.exports = { StepExecutor };

@@ -1,174 +1,379 @@
-// src/core/orchestrator/transition-manager.js
+/**
+ * @fileoverview Transition Manager отвечает за определение порядка выполнения шагов
+ * и правил перехода между ними. Он работает в тесной связке с StateManager
+ * и предоставляет информацию о том, какой шаг должен выполняться следующим
+ * на основе текущего состояния задачи, результатов предыдущих шагов и внешних факторов.
+ */
 
 const logger = require('../../utils/logger');
-const { Transition } = require('../../models');
-const StepExecutorFactory = require('./step-executor-factory');
+const { TASK_STATES } = require('./state-manager');
 
 /**
- * Менеджер переходов между шагами
- * Отвечает за определение следующего шага и запись истории переходов
+ * Определение маппинга между состояниями задачи и шагами методологии.
+ * Это маппинг используется для определения, какой StepExecutor должен быть вызван для каждого состояния.
+ */
+const STATE_TO_STEP_MAPPING = {
+  // Шаг 1: Понимание задачи
+  [TASK_STATES.TASK_UNDERSTANDING]: 'taskUnderstanding',
+  
+  // Шаг 2: Анализ контекста проекта
+  [TASK_STATES.PROJECT_UNDERSTANDING]: 'projectUnderstanding',
+  
+  // Шаг 3: Планирование и декомпозиция
+  [TASK_STATES.TASK_PLANNING]: 'taskPlanner',
+  
+  // Шаг 4: Выбор подхода и технологий
+  [TASK_STATES.TECHNOLOGY_SELECTION]: 'technologySuggester',
+  
+  // Шаг 5: Генерация кода
+  [TASK_STATES.CODE_GENERATION]: 'codeGenerator',
+  
+  // Шаг 6: Итеративное уточнение кода
+  [TASK_STATES.CODE_REFINEMENT]: 'codeRefiner',
+  
+  // Шаг 7: Саморефлексия и ревью кода
+  [TASK_STATES.SELF_REVIEW]: 'selfReflection',
+  
+  // Шаг 8: Исправление ошибок
+  [TASK_STATES.ERROR_CORRECTION]: 'errorCorrector',
+  
+  // Шаг 9: Генерация тестов
+  [TASK_STATES.TEST_GENERATION]: 'testGenerator',
+  
+  // Шаг 10: Запуск кода и тестов
+  [TASK_STATES.CODE_EXECUTION]: 'codeExecutor',
+  
+  // Шаг 11: Анализ результатов тестов
+  [TASK_STATES.TEST_ANALYSIS]: 'testAnalyzer',
+  
+  // Шаг 12: Генерация/обновление документации
+  [TASK_STATES.DOCUMENTATION_UPDATE]: 'documentationUpdater',
+  
+  // Шаг 13: Обучение и обновление знаний
+  [TASK_STATES.LEARNING_UPDATE]: 'learningSystem',
+  
+  // Шаг 14: Подготовка к мержу (PR)
+  [TASK_STATES.PR_PREPARATION]: 'prManager',
+  
+  // Шаг 15: Интеграция обратной связи
+  [TASK_STATES.FEEDBACK_INTEGRATION]: 'feedbackIntegrator',
+};
+
+/**
+ * Определение следующего состояния для каждого состояния "completed"
+ */
+const COMPLETED_STATE_TRANSITIONS = {
+  [TASK_STATES.TASK_UNDERSTANDING_COMPLETED]: TASK_STATES.PROJECT_UNDERSTANDING,
+  [TASK_STATES.PROJECT_UNDERSTANDING_COMPLETED]: TASK_STATES.TASK_PLANNING,
+  [TASK_STATES.TASK_PLANNING_COMPLETED]: TASK_STATES.TECHNOLOGY_SELECTION,
+  [TASK_STATES.TECHNOLOGY_SELECTION_COMPLETED]: TASK_STATES.CODE_GENERATION,
+  [TASK_STATES.CODE_GENERATION_COMPLETED]: TASK_STATES.CODE_REFINEMENT,
+  [TASK_STATES.CODE_REFINEMENT_COMPLETED]: TASK_STATES.SELF_REVIEW,
+  // Для SELF_REVIEW_COMPLETED есть два пути - ERROR_CORRECTION или TEST_GENERATION, 
+  // решение принимается динамически
+  // Для ERROR_CORRECTION_COMPLETED есть два пути - SELF_REVIEW или TEST_GENERATION,
+  // решение принимается динамически
+  [TASK_STATES.TEST_GENERATION_COMPLETED]: TASK_STATES.CODE_EXECUTION,
+  [TASK_STATES.CODE_EXECUTION_COMPLETED]: TASK_STATES.TEST_ANALYSIS,
+  // Для TEST_ANALYSIS_COMPLETED есть два пути - ERROR_CORRECTION или DOCUMENTATION_UPDATE,
+  // решение принимается динамически
+  [TASK_STATES.DOCUMENTATION_UPDATE_COMPLETED]: TASK_STATES.LEARNING_UPDATE,
+  [TASK_STATES.LEARNING_UPDATE_COMPLETED]: TASK_STATES.PR_PREPARATION,
+  // Для PR_PREPARATION_COMPLETED есть два пути - FEEDBACK_INTEGRATION или COMPLETED,
+  // решение принимается динамически
+  // Для FEEDBACK_INTEGRATION_COMPLETED есть несколько путей, решение принимается динамически
+};
+
+/**
+ * Класс управления переходами между шагами методологии.
  */
 class TransitionManager {
-  constructor() {
-    this.stepExecutorFactory = new StepExecutorFactory();
+  /**
+   * Создает экземпляр TransitionManager.
+   * @param {Object} options - Опции для инициализации.
+   * @param {Object} options.stateManager - Экземпляр StateManager.
+   * @param {Object} options.contextManager - Экземпляр ContextManager.
+   */
+  constructor({ stateManager, contextManager } = {}) {
+    this.stateManager = stateManager;
+    this.contextManager = contextManager;
   }
 
   /**
-   * Определение следующего шага на основе текущего шага, контекста и результата
-   * @param {number} currentStep - Текущий шаг
-   * @param {object} context - Контекст задачи
-   * @param {object} result - Результат выполнения текущего шага
-   * @returns {Promise<number|null>} - Номер следующего шага или null, если это последний шаг
+   * Получает имя шага для выполнения в заданном состоянии.
+   * @param {string} state - Состояние задачи.
+   * @returns {string|null} - Имя шага или null, если для состояния нет соответствующего шага.
    */
-  async getNextStep(currentStep, context, result) {
-    // Простая реализация: переход к следующему шагу
-    // В реальности здесь может быть сложная логика принятия решений
-    
-    // Если это последний шаг, возвращаем null
-    if (currentStep >= 16) {
-      return null;
-    }
-    
-    // Проверяем, может ли быть выполнен следующий шаг
-    const nextStep = currentStep + 1;
-    const executor = this.stepExecutorFactory.createExecutor(nextStep);
-    
-    if (await executor.canExecute(context)) {
-      return nextStep;
-    }
-    
-    // Если следующий шаг не может быть выполнен, ищем альтернативный путь
-    return this.findAlternativeStep(nextStep, context);
+  getStepForState(state) {
+    return STATE_TO_STEP_MAPPING[state] || null;
   }
 
   /**
-   * Поиск альтернативного шага, если текущий не может быть выполнен
-   * @param {number} currentStep - Текущий шаг
-   * @param {object} context - Контекст задачи
-   * @returns {Promise<number|null>} - Номер альтернативного шага или null
+   * Определяет следующее состояние на основе текущего состояния и результатов предыдущих шагов.
+   * @param {string} taskId - Идентификатор задачи.
+   * @param {string} currentState - Текущее состояние задачи.
+   * @returns {Promise<string>} - Следующее состояние.
    */
-  async findAlternativeStep(currentStep, context) {
-    // Начинаем поиск с шага после текущего
-    for (let step = currentStep + 1; step <= 16; step++) {
-      const executor = this.stepExecutorFactory.createExecutor(step);
-      
-      if (await executor.canExecute(context)) {
-        logger.info(`Found alternative step ${step} for step ${currentStep}`);
-        return step;
+  async determineNextState(taskId, currentState) {
+    logger.debug(`Determining next state for task ${taskId} from current state ${currentState}`);
+    
+    try {
+      // Для состояний "completed" используем предопределенное следующее состояние
+      if (COMPLETED_STATE_TRANSITIONS[currentState]) {
+        return COMPLETED_STATE_TRANSITIONS[currentState];
       }
-    }
-    
-    // Если не нашли шаг после текущего, проверяем завершение задачи
-    if (this._canCompleteTask(context)) {
-      logger.info(`No alternative steps found, but task can be completed`);
-      return null; // null означает завершение задачи
-    }
-    
-    // Если не можем ни продолжить, ни завершить задачу
-    logger.warn(`No valid next steps found for step ${currentStep}`);
-    return null;
-  }
-
-  /**
-   * Проверка возможности завершения задачи (пропуск оставшихся шагов)
-   * @param {object} context - Контекст задачи
-   * @returns {boolean} - true, если задача может быть завершена
-   * @private
-   */
-  _canCompleteTask(context) {
-    // Здесь логика определения, можно ли считать задачу завершенной
-    // даже если некоторые шаги не выполнены
-    
-    // Пример: если есть сгенерированный код и он прошел тесты,
-    // то можно пропустить документацию, обучение и т.д.
-    
-    const hasGeneratedCode = !!(context.generatedCode || context.refinedCode);
-    const hasPassedTests = context.testResults && context.testResults.passed;
-    
-    return hasGeneratedCode && hasPassedTests;
-  }
-
-  /**
-   * Запись перехода между шагами
-   * @param {string} taskId - ID задачи
-   * @param {number} fromStep - Исходный шаг
-   * @param {number|null} toStep - Целевой шаг (null означает завершение задачи)
-   * @param {string} trigger - Причина перехода ('auto', 'manual', 'error', 'retry', 'rollback', 'alternative_path', 'alternative_on_error')
-   * @returns {Promise<object>} - Созданный объект перехода
-   */
-  async recordTransition(taskId, fromStep, toStep, trigger) {
-    try {
-      const transition = await Transition.create({
-        taskId,
-        fromStep,
-        toStep,
-        trigger,
-        timestamp: new Date(),
-        metadata: {} // Можно добавить дополнительные метаданные
-      });
       
-      logger.debug(`Recorded transition for task ${taskId}: ${fromStep} -> ${toStep} (${trigger})`);
-      return transition;
+      // Для остальных состояний используем логику, зависящую от контекста и результатов
+      
+      // Получаем контекст задачи
+      const context = this.contextManager ? await this.contextManager.getContext(taskId) : null;
+      
+      // Если контекст недоступен, выбрасываем ошибку
+      if (!context) {
+        throw new Error(`Context not available for task ${taskId}`);
+      }
+      
+      // Специальная логика для определения пути после завершения Self Review
+      if (currentState === TASK_STATES.SELF_REVIEW_COMPLETED) {
+        const selfReviewResult = context.stepResults.selfReflection;
+        
+        // Если в результате ревью найдены ошибки, отправляем на исправление
+        if (selfReviewResult && (
+          selfReviewResult.issuesFound || 
+          selfReviewResult.errorsFound || 
+          (selfReviewResult.score && selfReviewResult.score < 0.7)
+        )) {
+          return TASK_STATES.ERROR_CORRECTION;
+        }
+        
+        // Иначе переходим к генерации тестов
+        return TASK_STATES.TEST_GENERATION;
+      }
+      
+      // Специальная логика для определения пути после завершения Error Correction
+      if (currentState === TASK_STATES.ERROR_CORRECTION_COMPLETED) {
+        const errorCorrectionResult = context.stepResults.errorCorrector;
+        
+        // Если исправления были значительными, отправляем на повторное ревью
+        if (errorCorrectionResult && (
+          errorCorrectionResult.significantChanges || 
+          errorCorrectionResult.needsReview
+        )) {
+          return TASK_STATES.SELF_REVIEW;
+        }
+        
+        // Иначе переходим к генерации тестов
+        return TASK_STATES.TEST_GENERATION;
+      }
+      
+      // Специальная логика для определения пути после завершения Test Analysis
+      if (currentState === TASK_STATES.TEST_ANALYSIS_COMPLETED) {
+        const testAnalysisResult = context.stepResults.testAnalyzer;
+        
+        // Если тесты выявили ошибки, отправляем на исправление
+        if (testAnalysisResult && (
+          testAnalysisResult.failedTests || 
+          testAnalysisResult.errorsFound
+        )) {
+          return TASK_STATES.ERROR_CORRECTION;
+        }
+        
+        // Иначе переходим к обновлению документации
+        return TASK_STATES.DOCUMENTATION_UPDATE;
+      }
+      
+      // Специальная логика для определения пути после завершения PR Preparation
+      if (currentState === TASK_STATES.PR_PREPARATION_COMPLETED) {
+        const prResult = context.stepResults.prManager;
+        
+        // Если PR был создан и требуется обработка обратной связи
+        if (prResult && prResult.prCreated && prResult.waitForReview) {
+          return TASK_STATES.FEEDBACK_INTEGRATION;
+        }
+        
+        // Иначе задача считается завершенной
+        return TASK_STATES.COMPLETED;
+      }
+      
+      // Специальная логика для определения пути после завершения Feedback Integration
+      if (currentState === TASK_STATES.FEEDBACK_INTEGRATION_COMPLETED) {
+        const feedbackResult = context.stepResults.feedbackIntegrator;
+        
+        // Если обратная связь требует существенных изменений в коде
+        if (feedbackResult && feedbackResult.requiresCodeChanges) {
+          return TASK_STATES.CODE_GENERATION;
+        }
+        
+        // Если требуется обновить PR
+        if (feedbackResult && feedbackResult.requiresPrUpdate) {
+          return TASK_STATES.PR_PREPARATION;
+        }
+        
+        // Иначе задача считается завершенной
+        return TASK_STATES.COMPLETED;
+      }
+      
+      // Для обработки возврата из PAUSED состояния
+      if (currentState === TASK_STATES.PAUSED) {
+        // Если в контексте есть информация о предыдущем состоянии
+        const lastTransition = await this.stateManager.getLastTransition(taskId);
+        if (lastTransition && lastTransition.fromState && 
+            lastTransition.fromState !== TASK_STATES.PAUSED) {
+          return lastTransition.fromState;
+        }
+        
+        // Если нет информации, возвращаемся в начало
+        return TASK_STATES.INITIALIZED;
+      }
+      
+      // Для обработки возврата из WAITING_FOR_INPUT состояния
+      if (currentState === TASK_STATES.WAITING_FOR_INPUT) {
+        // Если в контексте есть информация о следующем состоянии
+        if (context.data && context.data.nextStateAfterInput) {
+          return context.data.nextStateAfterInput;
+        }
+        
+        // Если нет информации, возвращаемся к текущему активному шагу
+        const lastActiveState = context.history
+          .filter(h => h.state !== TASK_STATES.WAITING_FOR_INPUT && h.state !== TASK_STATES.PAUSED)
+          .pop();
+          
+        return lastActiveState ? lastActiveState.state : TASK_STATES.INITIALIZED;
+      }
+      
+      // Для неизвестных состояний возвращаем INITIALIZED
+      logger.warn(`No transition rule defined for state ${currentState}, returning to INITIALIZED`);
+      return TASK_STATES.INITIALIZED;
     } catch (error) {
-      logger.error(`Error recording transition: ${error.message}`, {
-        taskId,
-        fromStep,
-        toStep,
-        trigger,
-        error
-      });
-      
-      // Не выбрасываем ошибку, чтобы не прерывать основной процесс
-      return null;
+      logger.error(`Error determining next state for task ${taskId}:`, error);
+      throw error;
     }
   }
 
   /**
-   * Получение истории переходов для задачи
-   * @param {string} taskId - ID задачи
-   * @returns {Promise<Array>} - История переходов
+   * Выполняет переход к следующему состоянию.
+   * @param {string} taskId - Идентификатор задачи.
+   * @param {string} [customNextState=null] - Кастомное следующее состояние (если null, определяется автоматически).
+   * @param {string} [message=''] - Сообщение о переходе.
+   * @param {Object} [metadata={}] - Дополнительные данные о переходе.
+   * @returns {Promise<Object>} - Результат операции.
    */
-  async getTransitionHistory(taskId) {
+  async transitionToNextState(taskId, customNextState = null, message = '', metadata = {}) {
+    logger.info(`Transitioning to next state for task ${taskId}`);
+    
     try {
-      const transitions = await Transition.findAll({
-        where: { taskId },
-        order: [['timestamp', 'ASC']]
-      });
+      // Получаем текущее состояние
+      const currentState = await this.stateManager.getCurrentState(taskId);
       
-      return transitions;
+      // Определяем следующее состояние (если не задано явно)
+      const nextState = customNextState || await this.determineNextState(taskId, currentState);
+      
+      // Обновляем состояние
+      const result = await this.stateManager.updateState(taskId, nextState, message, metadata);
+      
+      logger.info(`Transitioned task ${taskId} from ${currentState} to ${nextState}`);
+      
+      return {
+        ...result,
+        step: this.getStepForState(nextState)
+      };
     } catch (error) {
-      logger.error(`Error getting transition history: ${error.message}`, {
-        taskId,
-        error
-      });
-      return [];
+      logger.error(`Error transitioning to next state for task ${taskId}:`, error);
+      throw error;
     }
   }
 
   /**
-   * Проверка допустимости перехода между шагами
-   * @param {number} fromStep - Исходный шаг
-   * @param {number} toStep - Целевой шаг
-   * @returns {boolean} - true, если переход допустим
+   * Форсирует переход в состояние ошибки.
+   * @param {string} taskId - Идентификатор задачи.
+   * @param {string} errorMessage - Сообщение об ошибке.
+   * @param {Object} errorDetails - Детали ошибки.
+   * @returns {Promise<Object>} - Результат операции.
    */
-  isValidTransition(fromStep, toStep) {
-    // Простая проверка: шаги должны быть в допустимом диапазоне
-    if (fromStep < 1 || fromStep > 16 || toStep < 1 || toStep > 16) {
-      return false;
+  async transitionToError(taskId, errorMessage, errorDetails = {}) {
+    logger.error(`Transitioning task ${taskId} to error state: ${errorMessage}`);
+    
+    try {
+      // Обновляем состояние на FAILED
+      const result = await this.stateManager.updateState(
+        taskId, 
+        TASK_STATES.FAILED, 
+        errorMessage, 
+        { error: errorDetails }
+      );
+      
+      return result;
+    } catch (error) {
+      logger.error(`Error transitioning to error state for task ${taskId}:`, error);
+      throw error;
     }
+  }
+
+  /**
+   * Форсирует переход в состояние ожидания ввода пользователя.
+   * @param {string} taskId - Идентификатор задачи.
+   * @param {string} message - Сообщение для пользователя.
+   * @param {string} nextStateAfterInput - Состояние, в которое нужно перейти после получения ввода.
+   * @returns {Promise<Object>} - Результат операции.
+   */
+  async transitionToWaitingForInput(taskId, message, nextStateAfterInput) {
+    logger.info(`Transitioning task ${taskId} to waiting for input state`);
     
-    // Можно добавить дополнительные правила:
-    // - Некоторые шаги могут иметь зависимости
-    // - Некоторые переходы могут быть запрещены
-    
-    // Пример: запрет перехода от генерации кода сразу к PR
-    if (fromStep === 5 && toStep === 14) {
-      return false;
+    try {
+      // Сохраняем информацию о следующем состоянии в контексте
+      if (this.contextManager) {
+        await this.contextManager.updateContext(
+          taskId, 
+          'data.nextStateAfterInput', 
+          nextStateAfterInput
+        );
+      }
+      
+      // Обновляем состояние на WAITING_FOR_INPUT
+      const result = await this.stateManager.updateState(
+        taskId, 
+        TASK_STATES.WAITING_FOR_INPUT, 
+        message, 
+        { nextStateAfterInput }
+      );
+      
+      return result;
+    } catch (error) {
+      logger.error(`Error transitioning to waiting for input state for task ${taskId}:`, error);
+      throw error;
     }
+  }
+
+  /**
+   * Получает имя шага, который должен выполняться следующим.
+   * @param {string} taskId - Идентификатор задачи.
+   * @returns {Promise<string>} - Имя шага.
+   */
+  async getNextStep(taskId) {
+    logger.debug(`Getting next step for task ${taskId}`);
     
-    return true;
+    try {
+      // Получаем текущее состояние
+      const currentState = await this.stateManager.getCurrentState(taskId);
+      
+      // Если текущее состояние уже соответствует шагу, возвращаем его
+      const currentStep = this.getStepForState(currentState);
+      if (currentStep) {
+        return currentStep;
+      }
+      
+      // Иначе определяем следующее состояние и соответствующий ему шаг
+      const nextState = await this.determineNextState(taskId, currentState);
+      return this.getStepForState(nextState);
+    } catch (error) {
+      logger.error(`Error getting next step for task ${taskId}:`, error);
+      throw error;
+    }
   }
 }
 
-module.exports = TransitionManager;
-
+module.exports = {
+  TransitionManager,
+  STATE_TO_STEP_MAPPING,
+  COMPLETED_STATE_TRANSITIONS
+};

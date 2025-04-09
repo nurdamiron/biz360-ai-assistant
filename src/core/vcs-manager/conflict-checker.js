@@ -1,6 +1,6 @@
 // src/core/vcs-manager/conflict-checker.js
 
-const gitClient = require('./git-client');
+const GitService = require('../vcs-manager/gitService');
 const llmClient = require('../../utils/llm-client');
 const promptManager = require('../../utils/prompt-manager');
 const logger = require('../../utils/logger');
@@ -25,7 +25,7 @@ class ConflictChecker {
       logger.info(`Проверка конфликтов между ветками ${options.baseBranch} и ${options.headBranch}`);
       
       // Проверяем наличие конфликтов
-      const hasConflicts = await gitClient.checkMergeConflicts(
+      const hasConflicts = await GitService.checkMergeConflicts(
         options.baseBranch, 
         options.headBranch
       );
@@ -38,7 +38,7 @@ class ConflictChecker {
       }
       
       // Получаем список файлов с конфликтами
-      const conflictFiles = await gitClient.getConflictFiles(
+      const conflictFiles = await GitService.getConflictFiles(
         options.baseBranch, 
         options.headBranch
       );
@@ -94,7 +94,7 @@ class ConflictChecker {
         conflictFiles.slice(0, 5).map(async (file) => {
           try {
             // Получаем содержимое файла с конфликтами
-            const conflictContent = await gitClient.getFileWithConflicts(
+            const conflictContent = await GitService.getFileWithConflicts(
               baseBranch, 
               headBranch, 
               file

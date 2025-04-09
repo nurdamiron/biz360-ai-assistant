@@ -3,7 +3,7 @@
 const llmClient = require('../../utils/llm-client');
 const promptManager = require('../../utils/prompt-manager');
 const logger = require('../../utils/logger');
-const gitClient = require('./git-client');
+const GitService = require('./git-client');
 const fs = require('fs').promises;
 const path = require('path');
 
@@ -28,7 +28,7 @@ class ReviewChecklistGenerator {
       logger.info(`Генерация чеклиста для код-ревью для ветки ${options.headBranch}`);
       
       // Получаем список измененных файлов
-      const changedFiles = await gitClient.getChangedFiles(
+      const changedFiles = await GitService.getChangedFiles(
         options.baseBranch, 
         options.headBranch
       );
@@ -47,7 +47,7 @@ class ReviewChecklistGenerator {
       const fileContents = await Promise.all(
         filesForAnalysis.map(async (file) => {
           try {
-            const diff = await gitClient.getFileDiff(
+            const diff = await GitService.getFileDiff(
               options.baseBranch, 
               options.headBranch, 
               file
@@ -180,7 +180,7 @@ class ReviewChecklistGenerator {
       logger.info(`Оценка PR для ветки ${options.headBranch}`);
       
       // Получаем список измененных файлов
-      const changedFiles = await gitClient.getChangedFiles(
+      const changedFiles = await GitService.getChangedFiles(
         options.baseBranch, 
         options.headBranch
       );
@@ -192,7 +192,7 @@ class ReviewChecklistGenerator {
       const fileContents = await Promise.all(
         filesForAnalysis.map(async (file) => {
           try {
-            const diff = await gitClient.getFileDiff(
+            const diff = await GitService.getFileDiff(
               options.baseBranch, 
               options.headBranch, 
               file

@@ -2,8 +2,7 @@
 const logger = require('../../utils/logger');
 const codeTestingSystem = require('../../core/code-testing');
 const { CodeGenerationModel, Task } = require('../../models');
-const gitClient = require('../../utils/git-client');
-const notificationManager = require('../../utils/notification-manager');
+const GitService = require('../../core/vcs-manager/gitService');const notificationManager = require('../../utils/notification-manager');
 const projectContext = require('../../core/project-understanding');
 
 /**
@@ -29,7 +28,7 @@ async function processCodeTesting(job) {
       const { projectId, repositoryUrl, branch } = context;
       
       // Клонируем/обновляем репозиторий
-      const repoPath = await gitClient.prepareRepository(repositoryUrl, branch);
+      const repoPath = await GitService.prepareRepository(repositoryUrl, branch);
       
       // Запускаем тестирование существующего кода
       const testResults = await codeTestingSystem.testExistingCode({
@@ -74,7 +73,7 @@ async function processCodeTesting(job) {
       const { projectId, repositoryUrl, branch } = context;
       
       // Клонируем/обновляем репозиторий
-      const repoPath = await gitClient.prepareRepository(repositoryUrl, branch);
+      const repoPath = await GitService.prepareRepository(repositoryUrl, branch);
       
       // Запускаем тестирование сгенерированного кода
       const testResults = await codeTestingSystem.testGeneratedCode({

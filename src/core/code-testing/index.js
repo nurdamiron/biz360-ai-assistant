@@ -5,7 +5,7 @@ const testRunner = require('./test-runner');
 const codeValidator = require('./code-validator');
 const codeMetricsCollector = require('./code-metrics-collector');
 const { CodeGenerationModel, TestReportModel } = require('../../models');
-const gitClient = require('../../utils/git-client');
+const GitService = require('../../core/vcs-manager/gitService');
 const notificationManager = require('../../utils/notification-manager');
 
 /**
@@ -190,7 +190,7 @@ class CodeTestingSystem {
       
       // Формируем структуру файлов
       const files = await Promise.all(filePaths.map(async (path) => {
-        const content = await gitClient.readFile(repoPath, path);
+        const content = await GitService.readFile(repoPath, path);
         return { path, content };
       }));
       

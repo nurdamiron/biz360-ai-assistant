@@ -1,119 +1,177 @@
-// src/core/orchestrator/step-executor-factory.js
+/**
+ * @fileoverview Фабрика для создания экземпляров исполнителей шагов методологии.
+ * Она инстанцирует соответствующий класс StepExecutor в зависимости от названия шага
+ * и предоставляет ему необходимые зависимости.
+ */
 
 const logger = require('../../utils/logger');
+const { StepExecutor } = require('./step-executor');
 
 /**
- * Фабрика для создания исполнителей шагов
+ * Фабрика для создания исполнителей шагов.
  */
 class StepExecutorFactory {
-  constructor() {
-    // Кэш для хранения инстансов исполнителей
-    this.executorCache = new Map();
+  /**
+   * Создает экземпляр StepExecutorFactory.
+   * @param {Object} options - Опции для инициализации.
+   * @param {Object} options.contextManager - Экземпляр ContextManager.
+   * @param {Object} options.stateManager - Экземпляр StateManager.
+   * @param {Object} options.notificationManager - Экземпляр NotificationManager.
+   * @param {Object} options.db - Интерфейс к базе данных.
+   * @param {Object} options.llmClient - Клиент для взаимодействия с LLM.
+   * @param {Object} options.promptManager - Менеджер промптов.
+   */
+  constructor({
+    contextManager,
+    stateManager,
+    notificationManager,
+    db,
+    llmClient,
+    promptManager
+  } = {}) {
+    this.contextManager = contextManager;
+    this.stateManager = stateManager;
+    this.notificationManager = notificationManager;
+    this.db = db;
+    this.llmClient = llmClient;
+    this.promptManager = promptManager;
     
-    // Маппинг номеров шагов на классы исполнителей
-    this.executorMapping = {
-      1: () => require('./step-executors/task-understanding-executor'),
-      2: () => require('./step-executors/project-context-executor'),
-      3: () => require('./step-executors/planning-executor'),
-      4: () => require('./step-executors/technology-selection-executor'),
-      5: () => require('./step-executors/code-generation-executor'),
-      6: () => require('./step-executors/code-refinement-executor'),
-      7: () => require('./step-executors/code-review-executor'),
-      8: () => require('./step-executors/error-correction-executor'),
-      9: () => require('./step-executors/test-generation-executor'),
-      10: () => require('./step-executors/code-execution-executor'),
-      11: () => require('./step-executors/test-analysis-executor'),
-      12: () => require('./step-executors/documentation-executor'),
-      13: () => require('./step-executors/knowledge-update-executor'),
-      14: () => require('./step-executors/pull-request-executor'),
-      15: () => require('./step-executors/feedback-integration-executor'),
-      16: () => require('./step-executors/user-interaction-executor')
-    };
+    // Регистрируем исполнителей шагов
+    this.executors = {};
+    this._registerExecutors();
   }
 
   /**
-   * Создание исполнителя для указанного шага
-   * @param {number} stepNumber - Номер шага (1-16)
-   * @returns {StepExecutor} - Исполнитель шага
-   * @throws {Error} - Если шаг не найден
+   * Регистрирует исполнителей шагов.
+   * @private
    */
-  createExecutor(stepNumber) {
-    // Проверяем наличие в кэше
-    if (this.executorCache.has(stepNumber)) {
-      return this.executorCache.get(stepNumber);
+  _registerExecutors() {
+    try {
+      // Здесь регистрируются все доступные исполнители шагов
+      this.executors = {
+        // Шаг 1: Понимание задачи
+        'taskUnderstanding': require('./step-executors/task-understanding-executor'),
+        
+        // Шаг 2: Анализ контекста проекта
+        'projectUnderstanding': require('./step-executors/project-understanding-executor'),
+        
+        // Шаг 3: Планирование и декомпозиция
+        'taskPlanner': require('./step-executors/task-planner-executor'),
+        
+        // Шаг 4: Выбор подхода и технологий
+        'technologySuggester': require('./step-executors/technology-suggester-executor'),
+        
+        // Шаг 5: Генерация кода
+        'codeGenerator': require('./step-executors/code-generator-executor'),
+        
+        // Шаг 6: Итеративное уточнение кода
+        'codeRefiner': require('./step-executors/code-refiner-executor'),
+        
+        // Шаг 7: Саморефлексия и ревью кода
+        'selfReflection': require('./step-executors/self-reflection-executor'),
+        
+        // Шаг 8: Исправление ошибок
+        'errorCorrector': require('./step-executors/error-corrector-executor'),
+        
+        // Шаг 9: Генерация тестов
+        'testGenerator': require('./step-executors/test-generator-executor'),
+        
+        // Шаг 10: Запуск кода и тестов
+        'codeExecutor': require('./step-executors/code-executor-executor'),
+        
+        // Шаг 11: Анализ результатов тестов
+        'testAnalyzer': require('./step-executors/test-analyzer-executor'),
+        
+        // Шаг 12: Генерация/обновление документации
+        'documentationUpdater': require('./step-executors/documentation-updater-executor'),
+        
+        // Шаг 13: Обучение и обновление знаний
+        'learningSystem': require('./step-executors/learning-system-executor'),
+        
+        // Шаг 14: Подготовка к мержу (PR)
+        'prManager': require('./step-executors/pr-manager-executor'),
+        
+        // Шаг 15: Интеграция обратной связи
+        'feedbackIntegrator': require('./step-executors/feedback-integrator-executor')
+      };
+    } catch (error) {
+      // Логируем ошибку, но не прерываем инициализацию
+      logger.error('Error registering step executors:', error);
     }
+  }
+
+  /**
+   * Создает исполнителя для заданного шага.
+   * @param {string} stepName - Название шага.
+   * @returns {StepExecutor|null} - Экземпляр исполнителя шага или null, если исполнитель не найден.
+   */
+  createExecutor(stepName) {
+    logger.debug(`Creating executor for step: ${stepName}`);
     
-    // Проверяем существование исполнителя для шага
-    if (!this.executorMapping[stepNumber]) {
-      throw new Error(`No executor found for step ${stepNumber}`);
+    // Получаем класс исполнителя для шага
+    const ExecutorClass = this.executors[stepName];
+    
+    if (!ExecutorClass) {
+      logger.error(`Executor not found for step: ${stepName}`);
+      return null;
     }
     
     try {
-      // Загружаем класс исполнителя
-      const ExecutorClass = this.executorMapping[stepNumber]();
+      // Создаем экземпляр исполнителя
+      const executor = new ExecutorClass({
+        contextManager: this.contextManager,
+        stateManager: this.stateManager,
+        notificationManager: this.notificationManager,
+        db: this.db,
+        llmClient: this.llmClient,
+        promptManager: this.promptManager
+      });
       
-      // Создаем экземпляр
-      const executor = new ExecutorClass();
-      
-      // Кэшируем для будущего использования
-      this.executorCache.set(stepNumber, executor);
+      // Проверяем, что исполнитель является наследником StepExecutor
+      if (!(executor instanceof StepExecutor)) {
+        logger.error(`Executor for step ${stepName} is not an instance of StepExecutor`);
+        return null;
+      }
       
       return executor;
     } catch (error) {
-      logger.error(`Error creating executor for step ${stepNumber}: ${error.message}`, {
-        stepNumber,
-        error
-      });
-      throw new Error(`Failed to create executor for step ${stepNumber}: ${error.message}`);
+      logger.error(`Error creating executor for step ${stepName}:`, error);
+      return null;
     }
   }
 
   /**
-   * Получение списка всех исполнителей
-   * @returns {Array<StepExecutor>} - Массив исполнителей
+   * Получает метаданные всех зарегистрированных исполнителей.
+   * @returns {Object} - Метаданные исполнителей.
    */
-  getAllExecutors() {
-    const executors = [];
+  getExecutorsMetadata() {
+    const metadata = {};
     
-    for (let step = 1; step <= 16; step++) {
+    for (const stepName in this.executors) {
       try {
-        executors.push(this.createExecutor(step));
+        const ExecutorClass = this.executors[stepName];
+        const executor = new ExecutorClass({
+          contextManager: this.contextManager,
+          stateManager: this.stateManager,
+          notificationManager: this.notificationManager,
+          db: this.db,
+          llmClient: this.llmClient,
+          promptManager: this.promptManager
+        });
+        
+        metadata[stepName] = executor.getMetadata();
       } catch (error) {
-        logger.warn(`Could not create executor for step ${step}: ${error.message}`);
+        logger.error(`Error getting metadata for step ${stepName}:`, error);
+        metadata[stepName] = {
+          name: stepName,
+          description: 'Error getting metadata',
+          error: error.message
+        };
       }
     }
     
-    return executors;
-  }
-
-  /**
-   * Получение информации о зависимостях между шагами
-   * @returns {Object} - Граф зависимостей
-   */
-  getDependencyGraph() {
-    const graph = {};
-    
-    // Получаем все исполнители
-    const executors = this.getAllExecutors();
-    
-    // Строим граф зависимостей
-    for (const executor of executors) {
-      const stepNumber = executor.constructor.stepNumber;
-      const dependencies = executor.getDependencies();
-      
-      graph[stepNumber] = dependencies;
-    }
-    
-    return graph;
-  }
-
-  /**
-   * Очистка кэша исполнителей
-   */
-  clearCache() {
-    this.executorCache.clear();
+    return metadata;
   }
 }
 
-module.exports = StepExecutorFactory;
-
+module.exports = { StepExecutorFactory };
